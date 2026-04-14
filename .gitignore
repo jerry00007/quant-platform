@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Pytest
+.pytest_cache/
+
+# Environment / Secrets
+.env
+!.env.docker
+!.env.example
+
+# macOS
+.DS_Store
+
+# Databases
+*.db
+
+# Logs
+*.log
+
+# Data caches
+data_cache/
+
+# Generated reports
+reports/
+*.html
+
+# Generated data files
+advanced_full_data.json
+advanced_results.json
+backtest_results.json
+grid_results/
+
+# Download state
+backend/.download_state.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

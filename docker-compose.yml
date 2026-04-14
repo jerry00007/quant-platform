@@ -1,0 +1,83 @@
+# ==============================
+# QuantWeave 量化交易平台 - Docker Compose 编排
+# ==============================
+# 使用方法：
+#   开发模式：docker compose up
+#   生产模式：docker compose --profile prod up -d
+#   构建镜像：docker compose build
+# ==============================
+
+services:
+  # ---- 后端 API ----
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ${DOCKER_TARGET:-development}
+    container_name: quantweave-api
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/app
+      - ./frontend:/app/frontend
+      - ./data_cache:/app/data_cache
+      - ./exports:/app/exports
+      - ./logs:/app/logs
+    env_file:
+      - ./backend/.env
+    environment:
+      - DATABASE_URL=sqlite:///./quantweave.db
+      - LOG_DIR=/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/system/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ---- MySQL 数据库（可选，生产环境推荐） ----
+  mysql:
+    image: mysql:8.0
+    container_name: quantweave-mysql
+    profiles:
+      - prod
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-quantweave123}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-quantweave}
+      MYSQL_USER: ${MYSQL_USER:-quantweave}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-quantweave123}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- Redis 缓存（可选，高频数据场景） ----
+  redis:
+    image: redis:7-alpine
+    container_name: quantweave-redis
+    profiles:
+      - prod
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mysql_data:
+  redis_data:
