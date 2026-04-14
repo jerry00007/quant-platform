@@ -1,0 +1,19 @@
+# QuantWeave - Docker 忽略文件
+# 构建时不发送到 Docker daemon 的文件
+
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+.env
+*.db
+data_cache/
+exports/
+logs/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+*.md
+LICENSE

@@ -1,0 +1,35 @@
+# Web框架
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic-settings>=2.0.0
+
+# 数据获取
+akshare>=1.12.0
+tushare>=1.2.90
+
+# 数据处理
+pandas>=2.0.0
+numpy>=1.24.0
+ta>=0.10.2
+
+# 数据库
+sqlalchemy>=2.0.0
+pymysql>=1.1.0
+mysql-connector-python>=8.3.0
+redis>=5.0.0
+
+# 定时任务
+apscheduler>=3.10.0
+
+# 通知
+requests>=2.31.0
+
+# 配置
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# 日志
+loguru>=0.7.0
+
+# 报告导出
+openpyxl>=3.1.0
