@@ -45,3 +45,6 @@ backend/.download_state.json
 .vscode/
 *.swp
 *.swo
+archive/
+*.pyc
+__pycache__/
