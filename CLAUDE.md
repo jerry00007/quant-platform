@@ -1,6 +1,6 @@
 # QuantWeave 量化交易平台 - 项目知识库
 
-> 状态：稳定 | 最后更新：2026-04-15
+> 状态：稳定 v2.0 | 最后更新：2026-04-15
 
 ## 项目概述
 
@@ -265,3 +265,19 @@ quant-platform/
 | 定时任务调整 | `backend/app/main.py` 的 `lifespan()` + `services/scheduler/` |
 | 通知渠道配置 | `.env` 中的 SERVERCHAN_KEY / DINGTALK_WEBHOOK 等 |
 | Docker 部署 | `Dockerfile` + `docker-compose.yml` |
+| 数据库迁移 | `cd backend && alembic revision --autogenerate -m "desc"` |
+| 策略参数同步 | `cd backend && python sync_strategies.py` |
+| 运行测试 | `cd backend && python -m pytest tests/ -v` |
+
+---
+
+## v2.0 工程化改进（2026-04-15）
+
+- **Alembic 数据库迁移**：`backend/alembic/`，支持 schema 版本管理
+- **4核心策略参数入库**：`sync_strategies.py` 将回测验证的最优参数写入 strategies 表
+- **风控巡检**：持仓止损/止盈监控，自动生成 RiskAlert 并推送通知
+- **GitHub Actions CI**：`.github/workflows/ci.yml`，lint + pytest 自动化
+- **代码修复**：Pydantic V2 ConfigDict、去重 get_db()、版本号更新 2.0.0
+- **测试整理**：所有测试文件归入 `tests/`，39 个测试通过
+- **旧脚本归档**：14 个遗留脚本移入 `archive/`
+- **全量回测锁定**：`backtest_all_strategies.py` + `bt_html.py` 不再改动

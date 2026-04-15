@@ -1,7 +1,7 @@
 """
 QuantWeave 量化交易平台 - 核心配置
 """
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 from functools import lru_cache
 
@@ -9,9 +9,11 @@ from functools import lru_cache
 class Settings(BaseSettings):
     """应用配置"""
     
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    
     # 应用基础
     APP_NAME: str = "QuantWeave"
-    APP_VERSION: str = "1.0.0"
+    APP_VERSION: str = "2.0.0"
     DEBUG: bool = True
     
     # 数据库
@@ -56,10 +58,6 @@ class Settings(BaseSettings):
     # API
     API_PREFIX: str = "/api/v1"
     CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://localhost:8000", "null"]
-    
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
 
 
 @lru_cache()

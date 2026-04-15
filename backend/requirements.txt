@@ -14,6 +14,7 @@ ta>=0.10.2
 
 # 数据库
 sqlalchemy>=2.0.0
+alembic>=1.13.0
 pymysql>=1.1.0
 mysql-connector-python>=8.3.0
 redis>=5.0.0

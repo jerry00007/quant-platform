@@ -11,7 +11,7 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from .core.config import get_settings
-from .core.database import init_db, SessionLocal
+from .core.database import init_db, SessionLocal, get_db
 from .api import all_routers
 from .services.scheduler.scheduler_service import SchedulerService
 from .services.notify.notify_service import NotifyService
@@ -26,15 +26,6 @@ settings = get_settings()
 
 # 全局调度器实例
 scheduler = None
-
-
-def get_db():
-    """数据库会话依赖"""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 def morning_brief_task():
@@ -112,10 +103,88 @@ def signal_scan_task():
 
 
 def risk_check_task():
-    """风控巡检任务"""
+    """风控巡检任务：检查持仓风险，生成告警"""
     logger.info("🛡️ 风控巡检任务执行...")
-    # 暂不实现，后续补充
-    pass
+    try:
+        db = SessionLocal()
+        try:
+            from app.models.models import Position, RiskAlert
+            from datetime import datetime
+
+            # 获取所有活跃持仓
+            positions = db.query(Position).filter(Position.is_active == True).all()
+            if not positions:
+                logger.info("无活跃持仓，跳过风控巡检")
+                return
+
+            alerts_created = 0
+            for pos in positions:
+                if not pos.current_price or not pos.avg_cost:
+                    continue
+
+                # 计算盈亏比例
+                profit_pct = (pos.current_price - pos.avg_cost) / pos.avg_cost * 100
+
+                # 规则1：止损预警（亏损超过5%）
+                if profit_pct <= -settings.STOP_LOSS_RATIO * 100:
+                    level = "critical" if profit_pct <= -settings.STOP_LOSS_RATIO * 100 else "warning"
+                    alert = RiskAlert(
+                        alert_type="止损",
+                        level=level,
+                        title=f"{pos.name or pos.ts_code} 触发止损线",
+                        detail=f"当前亏损 {profit_pct:.2f}%，止损线 -{settings.STOP_LOSS_RATIO*100:.0f}%。"
+                               f"成本价 {pos.avg_cost:.2f}，现价 {pos.current_price:.2f}",
+                        ts_code=pos.ts_code,
+                    )
+                    db.add(alert)
+                    alerts_created += 1
+
+                # 规则2：止盈提醒（盈利超过10%）
+                elif profit_pct >= settings.TAKE_PROFIT_RATIO * 100 * 0.67:
+                    alert = RiskAlert(
+                        alert_type="止盈",
+                        level="info",
+                        title=f"{pos.name or pos.ts_code} 接近止盈线",
+                        detail=f"当前盈利 {profit_pct:.2f}%，止盈线 +{settings.TAKE_PROFIT_RATIO*100:.0f}%。"
+                               f"成本价 {pos.avg_cost:.2f}，现价 {pos.current_price:.2f}",
+                        ts_code=pos.ts_code,
+                    )
+                    db.add(alert)
+                    alerts_created += 1
+
+            if alerts_created > 0:
+                db.commit()
+                logger.info(f"⚠️ 风控巡检生成 {alerts_created} 条告警")
+
+                # 发送告警通知
+                try:
+                    notify_service = NotifyService(
+                        serverchan_key=settings.SERVERCHAN_KEY,
+                        wechat_webhook=settings.WECHAT_WEBHOOK,
+                        dingtalk_webhook=settings.DINGTALK_WEBHOOK,
+                        email_smtp=settings.EMAIL_SMTP,
+                        email_sender=settings.EMAIL_SENDER,
+                        email_password=settings.EMAIL_PASSWORD,
+                        email_receiver=settings.EMAIL_RECEIVER,
+                    )
+                    recent_alerts = db.query(RiskAlert).filter(
+                        RiskAlert.is_read == False
+                    ).order_by(RiskAlert.created_at.desc()).limit(5).all()
+
+                    if recent_alerts:
+                        msg_lines = [f"🛡️ 风控巡检发现 {len(recent_alerts)} 条未读告警：\n"]
+                        for a in recent_alerts:
+                            msg_lines.append(f"[{a.level}] {a.title}\n{a.detail}\n")
+                        notify_service.send("QuantWeave 风控告警", "\n".join(msg_lines), level="warning")
+                except Exception as ne:
+                    logger.warning(f"风控告警通知发送失败: {ne}")
+            else:
+                logger.info("✅ 风控巡检通过，无异常")
+
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"风控巡检任务执行失败: {e}")
 
 
 @asynccontextmanager
