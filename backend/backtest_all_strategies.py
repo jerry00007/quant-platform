@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
 """
-QuantWeave — 全量策略2年回测
+QuantWeave — 全量策略2年回测（引用共用策略模块）
+
 4大策略：布林带上轨突破 + 双均线交叉 + 增强筹码 + 强势股回调企稳
+策略逻辑统一由 core_signals.py 提供
 
 使用方式:
     cd /Users/liujianyu/WorkBuddy/Claw/quant-platform/backend
     /opt/anaconda3/envs/quant-platform/bin/python backtest_all_strategies.py
 """
-import sqlite3, numpy as np, json
+import sqlite3, numpy as np, json, sys
 from datetime import datetime
 from pathlib import Path
+
+# 引用共用策略模块
+sys.path.insert(0, str(Path(__file__).parent / 'app' / 'services' / 'strategy'))
+from core_signals import (
+    CORE_STRATEGIES,
+    signals_bollinger_upper,
+    signals_dual_ma,
+    signals_enhanced_chip,
+    signals_pullback_stable,
+)
 
 DB_PATH = 'quantweave.db'
 START_DATE = '20240415'
@@ -24,6 +36,7 @@ COMMISSION = 0.0003
 REPORT_DIR = 'reports'
 REPORT_HTML = f'{REPORT_DIR}/all_strategies_backtest.html'
 REPORT_JSON = f'{REPORT_DIR}/all_strategies_backtest.json'
+
 
 def load_all_data():
     conn = sqlite3.connect(DB_PATH)
@@ -54,136 +67,41 @@ def load_all_data():
     print(f"Loaded {len(data)} stocks, {sum(len(v) for v in data.values())} records")
     return data, stock_names
 
-def tdx_sma(x, n, m):
-    y = np.empty(len(x)); y[0] = x[0]
-    for i in range(1, len(x)):
-        y[i] = (m * x[i] + (n - m) * y[i - 1]) / n
-    return y
 
-def _calc_zlcmq(closes, highs, lows, idx):
-    """计算第idx天的ZLCMQ值和窗口"""
-    c_arr = np.array([c for c in closes[:idx+1] if c is not None])
-    h_arr = np.array([h for h in highs[:idx+1] if h is not None])
-    l_arr = np.array([l for l in lows[:idx+1] if l is not None])
-    if len(c_arr) < 75:
-        return None, c_arr
-    lo75 = np.min(l_arr[-75:]); hi75 = np.max(h_arr[-75:])
-    var7 = (hi75 - lo75) / 100.0
-    if var7 < 1e-10:
-        return None, c_arr
-    raw = np.nan_to_num((c_arr[-75:] - lo75) / var7, nan=0.0)
-    var8 = tdx_sma(raw, 20, 1); var8s = tdx_sma(var8, 15, 1)
-    vara = 3.0 * var8 - 2.0 * var8s
-    zlcmq = 100.0 - vara
-    return zlcmq, c_arr
+def _sd_to_arrays(sd, dates):
+    """将 stock_data dict 转为 numpy arrays（适配 core_signals 接口）"""
+    close = np.array([sd.get(d, {}).get('close') for d in dates], dtype=float)
+    # 把 None 转为 NaN
+    close = np.where(close == None, np.nan, close)  # noqa: E711
+    high = np.array([sd.get(d, {}).get('high') for d in dates], dtype=float)
+    high = np.where(high == None, np.nan, high)
+    low = np.array([sd.get(d, {}).get('low') for d in dates], dtype=float)
+    low = np.where(low == None, np.nan, low)
+    vol = np.array([sd.get(d, {}).get('vol') for d in dates], dtype=float)
+    vol = np.where(vol == None, np.nan, vol)
+    open_ = np.array([sd.get(d, {}).get('open') for d in dates], dtype=float)
+    open_ = np.where(open_ == None, np.nan, open_)
+    return close, high, low, vol, open_
+
 
 # ============================================================
-# 4个策略信号函数
+# 适配器：将 core_signals 函数包装为回测引擎可用的接口
 # ============================================================
-def signals_bollinger_upper(sd, dates, params=None):
-    p = params or {}
-    period = p.get('period', 25); std_mult = p.get('std_mult', 2.0); near_pct = p.get('near_pct', 0.02)
-    signals = {}
-    closes = [sd.get(d, {}).get('close') for d in dates]
-    for i in range(period+1, len(closes)):
-        if closes[i] is None: continue
-        w = [c for c in closes[i-period:i] if c is not None]
-        if len(w) < period: continue
-        ma = np.mean(w); std = np.std(w, ddof=0)
-        upper = ma + std_mult*std; lower = ma - std_mult*std
-        if closes[i-1] is None: continue
-        if closes[i-1] <= upper and closes[i] > upper: signals[dates[i]] = 'buy'
-        elif (upper - closes[i]) / upper < near_pct and closes[i] > ma: signals[dates[i]] = 'buy'
-        if closes[i-1] >= ma and closes[i] < ma: signals[dates[i]] = 'sell'
-        elif closes[i] < lower: signals[dates[i]] = 'sell'
-    return signals
 
-def signals_dual_ma(sd, dates, params=None):
-    p = params or {}
-    sp = p.get('short_period', 7); lp = p.get('long_period', 40)
-    signals = {}
-    closes = [sd.get(d, {}).get('close') for d in dates]
-    ms = []; ml = []
-    for i in range(len(closes)):
-        if closes[i] is None: ms.append(None); ml.append(None); continue
-        ws = [c for c in closes[max(0,i-sp+1):i+1] if c is not None]
-        ms.append(np.mean(ws) if len(ws) >= sp else None)
-        wl = [c for c in closes[max(0,i-lp+1):i+1] if c is not None]
-        ml.append(np.mean(wl) if len(wl) >= lp else None)
-    for i in range(1, len(closes)):
-        if any(x is None for x in [closes[i], ms[i], ml[i], ms[i-1], ml[i-1]]): continue
-        if ms[i-1] <= ml[i-1] and ms[i] > ml[i]: signals[dates[i]] = 'buy'
-        elif ms[i-1] >= ml[i-1] and ms[i] < ml[i]: signals[dates[i]] = 'sell'
-    return signals
+def _adapter_close_only(func):
+    """包装仅需 close 的策略（布林带、双均线）"""
+    def wrapper(sd, dates, params=None):
+        close, _, _, _, _ = _sd_to_arrays(sd, dates)
+        return func(close, dates, params)
+    return wrapper
 
-def signals_enhanced_chip(sd, dates, params=None):
-    p = params or {}
-    n_days = p.get('n_days', 5); min_high = p.get('min_high', 98); min_fall = p.get('min_fall', 5)
-    chip_exit = p.get('chip_exit', 15); vol_mult = p.get('vol_surge_mult', 1.5)
-    signals = {}
-    closes = [sd.get(d, {}).get('close') for d in dates]
-    opens = [sd.get(d, {}).get('open') for d in dates]
-    highs = [sd.get(d, {}).get('high') for d in dates]
-    lows = [sd.get(d, {}).get('low') for d in dates]
-    vols = [sd.get(d, {}).get('vol') for d in dates]
-    for i in range(75, len(closes)):
-        if closes[i] is None: continue
-        zlcmq, c_arr = _calc_zlcmq(closes, highs, lows, i)
-        if zlcmq is None: continue
-        cur_z = zlcmq[-1]; prev_z = zlcmq[-2] if len(zlcmq)>1 else cur_z
-        zw = zlcmq[-n_days:] if len(zlcmq)>=n_days else zlcmq
-        zq_high = np.max(zw)
-        if zq_high < min_high: continue
-        if zq_high - cur_z < min_fall: continue
-        if not (prev_z >= 95 and cur_z < 95): continue
-        if opens[i] is None: continue
-        is_stable = (closes[i]>opens[i]) or (i>0 and closes[i-1] is not None and closes[i]>closes[i-1])
-        if not is_stable: continue
-        if vols[i] and vols[i] > 0:
-            rv = [v for v in vols[max(0,i-20):i] if v]
-            if rv and vols[i] < np.mean(rv)*vol_mult: continue
-        else: continue
-        ma60w = [c for c in closes[max(0,i-59):i+1] if c is not None]
-        if len(ma60w) >= 30 and closes[i] < np.mean(ma60w)*0.98: continue
-        signals[dates[i]] = 'buy'
-        if cur_z < chip_exit and prev_z < chip_exit: signals[dates[i]] = 'sell'
-    return signals
+def _adapter_full(func):
+    """包装需要全部字段的策略（增强筹码、回调企稳）"""
+    def wrapper(sd, dates, params=None):
+        close, high, low, vol, open_ = _sd_to_arrays(sd, dates)
+        return func(close, high, low, vol, open_, dates, params)
+    return wrapper
 
-def signals_pullback_stable(sd, dates, params=None):
-    p = params or {}
-    n_days = p.get('n_days', 8); min_high = p.get('min_high', 95); min_fall = p.get('min_fall', 5)
-    stable_thr = p.get('stable_threshold', 3)
-    signals = {}
-    closes = [sd.get(d, {}).get('close') for d in dates]
-    opens = [sd.get(d, {}).get('open') for d in dates]
-    lows = [sd.get(d, {}).get('low') for d in dates]
-    vols = [sd.get(d, {}).get('vol') for d in dates]
-    for i in range(75, len(closes)):
-        if closes[i] is None: continue
-        zlcmq, c_arr = _calc_zlcmq(closes,
-            [sd.get(d, {}).get('high') for d in dates], lows, i)
-        if zlcmq is None: continue
-        cur_z = zlcmq[-1]
-        zw = zlcmq[-n_days:] if len(zlcmq)>=n_days else zlcmq
-        if np.max(zw) < min_high: continue
-        if np.max(zw) - cur_z < min_fall: continue
-        cl = closes[i]; op = opens[i] if opens[i] else cl
-        sc = 0
-        if cl > op: sc += 1
-        if i>0 and closes[i-1] is not None and cl > closes[i-1]: sc += 1
-        if i>0 and lows[i] and lows[i-1] and lows[i] > lows[i-1]: sc += 1
-        if vols[i]:
-            rv = [v for v in vols[max(0,i-5):i] if v]
-            if rv and vols[i] < np.mean(rv): sc += 1
-        m5 = [c for c in closes[max(0,i-5):i] if c is not None]
-        if m5 and cl > np.mean(m5): sc += 1
-        if sc >= stable_thr: signals[dates[i]] = 'buy'
-        if cur_z < 20: signals[dates[i]] = 'sell'
-        elif len(c_arr) >= 60:
-            ma60 = np.mean(c_arr[-60:])
-            if i>0 and closes[i-1] is not None and closes[i-1]>=ma60 and cl<ma60:
-                signals[dates[i]] = 'sell'
-    return signals
 
 # ============================================================
 # Backtest Engine
@@ -288,7 +206,7 @@ def generate_html_report(results, stock_names):
     print(f"\n📊 HTML报告: {REPORT_HTML}")
 
 # ============================================================
-# Main
+# Main — 策略配置引用 CORE_STRATEGIES 注册表
 # ============================================================
 if __name__ == '__main__':
     print("=" * 60)
@@ -304,15 +222,19 @@ if __name__ == '__main__':
     conn.close()
     print(f"交易日数: {len(dates)}\n")
 
-    STRATEGIES = [
-        ('bollinger_upper', '布林带上轨突破', signals_bollinger_upper, {'period':25,'std_mult':2.0,'near_pct':0.02}),
-        ('dual_ma', '双均线交叉', signals_dual_ma, {'short_period':7,'long_period':40}),
-        ('enhanced_chip', '增强筹码策略', signals_enhanced_chip, {'n_days':5,'min_high':98,'min_fall':5,'chip_exit':15,'vol_surge_mult':1.5,'trend_ma_period':60}),
-        ('pullback_stable', '强势股回调企稳', signals_pullback_stable, {'n_days':8,'min_high':95,'min_fall':5,'stable_threshold':3}),
+    # 从共用模块读取策略配置，适配器包装
+    STRATEGY_LIST = [
+        ('bollinger_upper', _adapter_close_only(signals_bollinger_upper)),
+        ('dual_ma',         _adapter_close_only(signals_dual_ma)),
+        ('enhanced_chip',   _adapter_full(signals_enhanced_chip)),
+        ('pullback_stable', _adapter_full(signals_pullback_stable)),
     ]
 
     results = {}
-    for key, name, func, params in STRATEGIES:
+    for key, func in STRATEGY_LIST:
+        cfg = CORE_STRATEGIES[key]
+        name = cfg['name']
+        params = cfg['default_params']
         print(f"\n{'='*60}\n策略: {name}\n{'='*60}")
         results[key] = backtest_strategy(all_data, dates, func, params, name)
 
