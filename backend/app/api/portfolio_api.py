@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
 from ..core.database import get_db
-from ..core.nas_config import get_nas_db, check_nas_connection
 from ..services.portfolio.portfolio_service import portfolio_service
 
 # Pydantic模型定义
@@ -74,7 +73,7 @@ async def portfolio_health():
 @router.post("/positions", response_model=Dict[str, Any])
 async def create_position(
     position_data: PositionCreate,
-    db: Session = Depends(get_nas_db)
+    db: Session = Depends(get_db)
 ):
     """创建持仓"""
     try:
@@ -112,7 +111,7 @@ async def create_position(
 @router.get("/positions", response_model=Dict[str, Any])
 async def get_positions(
     account_name: str = "main",
-    db: Session = Depends(get_nas_db)
+    db: Session = Depends(get_db)  # 改用SQLite本地数据库
 ):
     """获取持仓汇总"""
     try:
@@ -132,7 +131,7 @@ async def get_positions(
 async def update_position_price(
     position_id: int,
     price_data: PositionUpdate,
-    db: Session = Depends(get_nas_db)
+    db: Session = Depends(get_db)
 ):
     """更新持仓价格"""
     try:
@@ -164,7 +163,7 @@ async def update_position_price(
 async def close_position(
     position_id: int,
     close_request: ClosePositionRequest,
-    db: Session = Depends(get_nas_db)
+    db: Session = Depends(get_db)
 ):
     """平仓"""
     try:
@@ -208,7 +207,7 @@ async def close_position(
 @router.post("/sync", response_model=Dict[str, Any])
 async def sync_positions(
     account_name: str = "main",
-    db: Session = Depends(get_nas_db)
+    db: Session = Depends(get_db)
 ):
     """同步持仓与市场价格"""
     try:
@@ -241,7 +240,7 @@ async def sync_positions(
 @router.get("/account/{account_name}", response_model=Dict[str, Any])
 async def get_account_info(
     account_name: str = "main",
-    db: Session = Depends(get_nas_db)
+    db: Session = Depends(get_db)
 ):
     """获取账户信息"""
     try:
@@ -273,7 +272,7 @@ async def get_account_info(
 @router.post("/deposit", response_model=Dict[str, Any])
 async def deposit_cash(
     deposit_data: DepositRequest,
-    db: Session = Depends(get_nas_db)
+    db: Session = Depends(get_db)
 ):
     """存入现金"""
     try:
@@ -305,7 +304,7 @@ async def deposit_cash(
 @router.post("/withdraw", response_model=Dict[str, Any])
 async def withdraw_cash(
     withdraw_data: WithdrawRequest,
-    db: Session = Depends(get_nas_db)
+    db: Session = Depends(get_db)
 ):
     """提取现金"""
     try:
@@ -339,7 +338,7 @@ async def get_transactions(
     account_name: str = "main",
     limit: int = 100,
     offset: int = 0,
-    db: Session = Depends(get_nas_db)
+    db: Session = Depends(get_db)
 ):
     """获取交易流水"""
     try:

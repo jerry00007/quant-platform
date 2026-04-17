@@ -37,7 +37,7 @@ CORE_STRATEGIES = [
         "strategy_type": "趋势",
         "params": {
             "short_period": 7,
-            "long_period": 40,
+            "long_period": 60,
         },
         "status": "running",
         "total_return": 52.53,

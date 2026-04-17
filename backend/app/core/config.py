@@ -59,6 +59,18 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api/v1"
     CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://localhost:8000", "null"]
 
+    # NAS MySQL 配置（nas_config.py 通过 os.getenv 直接读取，此处声明避免 Pydantic 报错）
+    NAS_MYSQL_HOST: str = "192.168.0.222"
+    NAS_MYSQL_PORT: str = "3306"
+    NAS_MYSQL_USER: str = "root"
+    NAS_MYSQL_PASSWORD: str = ""
+    NAS_MYSQL_DATABASE: str = "quantweave"
+
+    # NAS Redis 配置
+    NAS_REDIS_HOST: str = "192.168.0.222"
+    NAS_REDIS_PORT: str = "6379"
+    NAS_REDIS_DB: str = "0"
+
 
 @lru_cache()
 def get_settings() -> Settings:

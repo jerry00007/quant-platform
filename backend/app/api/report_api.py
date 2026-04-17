@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from ..core.database import get_db
 from ..core.config import get_settings
 from ..models.models import BacktestResult
+from ..schemas import ExportRequest
 from ..services.report.report_exporter import ReportExporter
 
 router = APIRouter(prefix="/report", tags=["报告导出"])
@@ -21,22 +22,16 @@ EXPORT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.pat
 
 
 @router.post("/export/excel", summary="导出回测Excel报告")
-def export_excel_report(data: dict, db: Session = Depends(get_db)):
+def export_excel_report(data: ExportRequest, db: Session = Depends(get_db)):
     """
     导出回测结果为 Excel 文件。
     
     两种模式：
     1. 传入 results 字典（完整回测结果）
     2. 传入 backtest_ids 列表（从数据库拉取结果）
-    
-    body: {
-        "results": {...},           // 可选，直接传入回测结果
-        "backtest_ids": [1, 2, 3],  // 可选，从数据库拉取指定回测
-        "filename": "my_report"     // 可选，自定义文件名
-    }
     """
-    results = data.get("results")
-    backtest_ids = data.get("backtest_ids", [])
+    results = data.results
+    backtest_ids = data.backtest_ids or []
     filename = data.get("filename")
 
     # 如果没有直接传入 results，从数据库拉取
@@ -52,11 +47,13 @@ def export_excel_report(data: dict, db: Session = Depends(get_db)):
     if not results:
         raise HTTPException(status_code=404, detail="没有可导出的回测数据")
 
-    if not filename:
+    if not data.filename:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"backtest_report_{timestamp}.xlsx"
-    elif not filename.endswith(".xlsx"):
-        filename += ".xlsx"
+    elif not data.filename.endswith(".xlsx"):
+        filename = data.filename + ".xlsx"
+    else:
+        filename = data.filename
 
     exporter = ReportExporter(output_dir=EXPORT_DIR)
     filepath = exporter.export_excel(results, filename=filename)
@@ -73,10 +70,10 @@ def export_excel_report(data: dict, db: Session = Depends(get_db)):
 
 
 @router.post("/export/json", summary="导出回测JSON摘要")
-def export_json_report(data: dict, db: Session = Depends(get_db)):
+def export_json_report(data: ExportRequest, db: Session = Depends(get_db)):
     """导出精简版 JSON 汇总"""
-    results = data.get("results")
-    backtest_ids = data.get("backtest_ids", [])
+    results = data.results
+    backtest_ids = data.backtest_ids or []
     filename = data.get("filename")
 
     if not results and backtest_ids:
@@ -90,11 +87,13 @@ def export_json_report(data: dict, db: Session = Depends(get_db)):
     if not results:
         raise HTTPException(status_code=404, detail="没有可导出的回测数据")
 
-    if not filename:
+    if not data.filename:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"backtest_summary_{timestamp}.json"
-    elif not filename.endswith(".json"):
-        filename += ".json"
+    elif not data.filename.endswith(".json"):
+        filename = data.filename + ".json"
+    else:
+        filename = data.filename
 
     exporter = ReportExporter(output_dir=EXPORT_DIR)
     filepath = exporter.export_json_summary(results, filename=filename)
@@ -111,6 +110,11 @@ def export_json_report(data: dict, db: Session = Depends(get_db)):
 def download_report(filename: str):
     """下载已导出的报告文件"""
     filepath = os.path.join(EXPORT_DIR, filename)
+    # 安全校验：防止路径遍历攻击
+    real_export = os.path.realpath(EXPORT_DIR)
+    real_file = os.path.realpath(filepath)
+    if not real_file.startswith(real_export + os.sep) and real_file != real_export:
+        raise HTTPException(status_code=403, detail="禁止访问该路径")
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail=f"文件不存在: {filename}")
     return FileResponse(

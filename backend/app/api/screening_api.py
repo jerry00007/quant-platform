@@ -9,6 +9,7 @@ from ..core.database import get_db
 from ..core.config import get_settings
 from ..services.data.data_service import DataService
 from ..services.screening.screening_service import ScreeningService
+from ..services.screening.quick_picks_service import QuickPicksService
 from ..services.signal.signal_service import SignalService
 
 router = APIRouter(prefix="/screening", tags=["选股与信号"])
@@ -52,6 +53,78 @@ def scan_market(
     }
 
 
+@router.get("/quick-picks", summary="一键选股（双均线+回调企稳）")
+def quick_picks(
+    db: Session = Depends(get_db),
+):
+    """
+    一键选股 — 使用实盘验证的双均线交叉(7/60) + 回调企稳(8/95/5)两大策略
+    对全市场进行扫描，返回当日买入信号股，含多策略共振检测和入场点位建议
+    """
+    service = QuickPicksService(db)
+    result = service.run_scan()
+    return result
+
+
+@router.post("/quick-picks/trigger", summary="触发一键选股扫描（后台执行）")
+def trigger_quick_picks(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    触发一键选股扫描 — 后台异步执行，立即返回
+    扫描结果存入 scan_results 表，前端通过 /quick-picks/latest 获取
+    """
+    # 检查是否已有今天的扫描结果
+    from ..services.screening.quick_picks_service import get_latest_scan_result
+    from pathlib import Path
+    db_path = Path(__file__).resolve().parent.parent.parent.parent / "quantweave.db"
+    latest = get_latest_scan_result(db_path)
+    
+    if latest:
+        import re
+        scan_date = latest.get("scan_time", "")[:10]
+        from datetime import date
+        today = date.today().isoformat()
+        if scan_date == today:
+            return {
+                "status": "already_done",
+                "message": f"今日已扫描过 (id={latest['id']}, 时间={latest['scan_time']})",
+                "latest_id": latest["id"],
+                "scan_time": latest["scan_time"],
+            }
+
+    # 后台执行扫描
+    service = QuickPicksService(db)
+    background_tasks.add_task(service.run_and_save)
+    
+    return {
+        "status": "scanning",
+        "message": "扫描已启动，预计2~3分钟完成",
+    }
+
+
+@router.get("/quick-picks/latest", summary="获取最新一键选股结果")
+def get_latest_quick_picks():
+    """
+    获取最新一次一键选股扫描结果（从数据库读取）
+    """
+    from ..services.screening.quick_picks_service import get_latest_scan_result
+    from pathlib import Path
+    db_path = Path(__file__).resolve().parent.parent.parent.parent / "quantweave.db"
+    latest = get_latest_scan_result(db_path)
+    
+    if not latest:
+        return {"status": "no_data", "message": "暂无扫描结果，请先点击选股"}
+    
+    return {
+        "status": "ok",
+        "scan_time": latest["scan_time"],
+        "data_date": latest["data_date"],
+        "result": latest["result"],
+    }
+
+
 @router.get("/analyze/{ts_code}", summary="单只股票深度分析")
 def analyze_stock(
     ts_code: str,
@@ -79,7 +152,7 @@ def get_presets():
 
 @router.get("/signals", summary="获取今日交易信号")
 def get_daily_signals(
-    stocks: Optional[str] = Query(None, description="指定股票，逗号分隔"),
+    stocks: Optional[str] = Query(None, description="指定股票，逗号分隔；支持关键字: portfolio/tracking_pool/watchlist"),
     strategies: Optional[str] = Query(None, description="指定策略，逗号分隔"),
     db: Session = Depends(get_db),
 ):
@@ -87,8 +160,23 @@ def get_daily_signals(
     ds = _get_data_service(db)
     service = SignalService(db, ds)
 
-    stock_codes = stocks.split(",") if stocks else None
+    stock_codes = None
     strategy_keys = strategies.split(",") if strategies else None
+
+    # 解析特殊关键字
+    if stocks:
+        if stocks == "tracking_pool":
+            # 从跟踪池获取 tracking 状态的股票
+            from ..services.tracking.tracking_pool_service import TrackingPoolService
+            tp_service = TrackingPoolService(db)
+            pool = tp_service.get_tracking_pool()
+            stock_codes = [item["ts_code"] for item in pool] if pool else []
+        elif stocks == "watchlist":
+            # 从关注列表获取
+            wl = ds.get_watchlist()
+            stock_codes = [item["ts_code"] for item in wl] if wl else []
+        else:
+            stock_codes = stocks.split(",")
 
     return service.generate_daily_signals(
         stock_codes=stock_codes,

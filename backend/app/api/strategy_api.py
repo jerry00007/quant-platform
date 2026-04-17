@@ -8,6 +8,7 @@ from typing import Optional
 from ..core.database import get_db
 from ..models.models import Strategy
 from ..services.strategy.strategy_service import STRATEGY_REGISTRY
+from ..schemas import StrategyCreate, StrategyUpdate, StrategyStatusUpdate
 
 router = APIRouter(prefix="/strategies", tags=["策略管理"])
 
@@ -63,13 +64,13 @@ def get_strategies(
 
 
 @router.post("", summary="创建策略")
-def create_strategy(data: dict, db: Session = Depends(get_db)):
+def create_strategy(data: StrategyCreate, db: Session = Depends(get_db)):
     strategy = Strategy(
-        name=data.get("name"),
-        description=data.get("description", ""),
-        strategy_type=data.get("strategy_type"),
-        params=data.get("params", {}),
-        stock_pool=data.get("stock_pool", []),
+        name=data.name,
+        description=data.description or "",
+        strategy_type=data.strategy_type,
+        params=data.params or {},
+        stock_pool=data.stock_pool or [],
         status="draft",
     )
     db.add(strategy)
@@ -79,11 +80,12 @@ def create_strategy(data: dict, db: Session = Depends(get_db)):
 
 
 @router.put("/{strategy_id}", summary="更新策略")
-def update_strategy(strategy_id: int, data: dict, db: Session = Depends(get_db)):
+def update_strategy(strategy_id: int, data: StrategyUpdate, db: Session = Depends(get_db)):
     strategy = db.query(Strategy).filter(Strategy.id == strategy_id).first()
     if not strategy:
         raise HTTPException(status_code=404, detail="策略不存在")
-    for key, value in data.items():
+    update_data = data.model_dump(exclude_none=True)
+    for key, value in update_data.items():
         if hasattr(strategy, key):
             setattr(strategy, key, value)
     db.commit()
@@ -91,16 +93,13 @@ def update_strategy(strategy_id: int, data: dict, db: Session = Depends(get_db))
 
 
 @router.put("/{strategy_id}/status", summary="切换策略状态")
-def toggle_strategy(strategy_id: int, data: dict, db: Session = Depends(get_db)):
+def toggle_strategy(strategy_id: int, data: StrategyStatusUpdate, db: Session = Depends(get_db)):
     strategy = db.query(Strategy).filter(Strategy.id == strategy_id).first()
     if not strategy:
         raise HTTPException(status_code=404, detail="策略不存在")
-    new_status = data.get("status", "draft")
-    if new_status not in ("draft", "running", "paused", "stopped"):
-        raise HTTPException(status_code=400, detail="无效状态")
-    strategy.status = new_status
+    strategy.status = data.status
     db.commit()
-    return {"message": f"策略状态已切换为 {new_status}"}
+    return {"message": f"策略状态已切换为 {data.status}"}
 
 
 @router.delete("/{strategy_id}", summary="删除策略")

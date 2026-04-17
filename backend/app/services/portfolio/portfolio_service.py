@@ -12,7 +12,11 @@ import numpy as np
 
 from app.models.models import Position, Transaction, Account
 from app.models.models import StockDaily
-from app.core.nas_config import get_nas_db, get_nas_redis
+from app.core.database import get_db
+
+# Redis暂不使用，统一SQLite后不需要远程缓存
+def get_nas_redis():
+    return None
 
 import logging
 logger = logging.getLogger(__name__)

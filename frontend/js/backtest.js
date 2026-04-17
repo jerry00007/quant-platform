@@ -183,6 +183,9 @@ function toggleBacktestMode() {
 }
 
 async function runSingleBacktest() {
+  const btn = document.querySelector('#singleModePanel .btn-primary');
+  if (btn && btn.disabled) return; // 防重复点击
+
   const params = {
     mode: 'single',
     strategy: document.getElementById('backtestStrategy').value,
@@ -195,19 +198,26 @@ async function runSingleBacktest() {
     take_profit: document.getElementById('backtestTakeProfit').value || null,
   };
 
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 回测中...'; }
   showToast('正在运行单股票回测...', 'info');
-  const result = await API.runBacktest(params);
-
-  if (result && !result.error) {
-    backtestResults.push(result);
-    renderSingleResult(result);
-    showToast('回测完成！', 'success');
-  } else {
-    showToast(result?.error || '回测失败，请检查后端服务', 'error');
+  try {
+    const result = await API.runBacktest(params);
+    if (result && !result.error) {
+      backtestResults.push(result);
+      renderSingleResult(result);
+      showToast('回测完成！', 'success');
+    } else {
+      showToast(result?.error || '回测失败，请检查后端服务', 'error');
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '▶ 运行单股票回测'; }
   }
 }
 
 async function runMarketBacktest() {
+  const btn = document.querySelector('#marketModePanel .btn-primary');
+  if (btn && btn.disabled) return; // 防重复点击
+
   const strategyCheckboxes = document.querySelectorAll('#marketStrategies input:checked');
   const strategies = Array.from(strategyCheckboxes).map(cb => cb.value);
   
@@ -229,15 +239,19 @@ async function runMarketBacktest() {
     stock_limit: parseInt(document.getElementById('marketStockLimit').value),
   };
 
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 回测中...'; }
   showToast('正在运行全市场动态回测（需较长时间）...', 'info');
-  const result = await API.runBacktest(params);
-
-  if (result && !result.error) {
-    backtestResults.push(result);
-    renderMarketResult(result);
-    showToast('全市场回测完成！', 'success');
-  } else {
-    showToast(result?.error || '回测失败，请检查后端服务', 'error');
+  try {
+    const result = await API.runBacktest(params);
+    if (result && !result.error) {
+      backtestResults.push(result);
+      renderMarketResult(result);
+      showToast('全市场回测完成！', 'success');
+    } else {
+      showToast(result?.error || '回测失败，请检查后端服务', 'error');
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🌐 运行全市场回测'; }
   }
 }
 

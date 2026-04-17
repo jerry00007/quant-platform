@@ -317,4 +317,4 @@ class TestStrategyRegistry:
         """验证自定义参数覆盖默认参数"""
         strategy = get_strategy("dual_ma", {"short_period": 10})
         assert strategy.params["short_period"] == 10
-        assert strategy.params["long_period"] == 40  # 默认值保留
+        assert strategy.params["long_period"] == 60  # V3优化后默认值

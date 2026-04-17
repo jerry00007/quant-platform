@@ -2,7 +2,7 @@
 """
 QuantWeave — 全量策略2年回测（引用共用策略模块）
 
-4大策略：布林带上轨突破 + 双均线交叉 + 增强筹码 + 强势股回调企稳
+5大策略：布林带上轨突破 + 双均线交叉 + 增强筹码 + 强势股回调企稳 + 均线趋势跟踪
 策略逻辑统一由 core_signals.py 提供
 
 使用方式:
@@ -21,16 +21,33 @@ from core_signals import (
     signals_dual_ma,
     signals_enhanced_chip,
     signals_pullback_stable,
+    signals_trend_ma,
 )
 
 DB_PATH = 'quantweave.db'
-START_DATE = '20240415'
-END_DATE = '20260414'
+START_DATE = '20240416'
+END_DATE = '20260416'
 INITIAL_CAPITAL = 1000000
 MAX_POSITIONS = 10
 POSITION_PER_STOCK = 0.2
 STOP_LOSS = -0.08
 TAKE_PROFIT = 0.15
+# 差异化止盈配置（从 core_signals.CORE_STRATEGIES.exit_config 同步）
+EXIT_CONFIGS = {
+    'bollinger_upper': {'type': 'fixed', 'take_profit_pct': 0.15},
+    'dual_ma': {'type': 'fixed', 'take_profit_pct': 0.15},
+    'enhanced_chip': {'type': 'fixed', 'take_profit_pct': 0.15},
+    'pullback_stable': {
+        'type': 'trailing',
+        'tiers': [
+            {'profit_pct': 0.05, 'trail_pct': 0.05},
+            {'profit_pct': 0.15, 'trail_pct': 0.03},
+            {'profit_pct': 0.30, 'trail_pct': 0.02},
+        ],
+        'min_profit_pct': 0.03,
+    },
+    'trend_ma': {'type': 'fixed', 'take_profit_pct': 0.15},
+}
 SLIPPAGE = 0.001
 COMMISSION = 0.0003
 REPORT_DIR = 'reports'
@@ -117,14 +134,39 @@ def backtest_strategy(all_data, dates, signal_func, params, name=""):
 
     cash = INITIAL_CAPITAL; positions = {}; pv = INITIAL_CAPITAL
     equity = []; trades = []
+    # 获取当前策略的止盈配置
+    exit_cfg = EXIT_CONFIGS.get(name, {'type': 'fixed', 'take_profit_pct': TAKE_PROFIT})
     for date in sorted(dates):
         to_sell = []
         for code, pos in list(positions.items()):
             if code in all_data and date in all_data[code]:
                 pr = all_data[code][date]['close']
                 pnl = (pr - pos['cp']) / pos['cp']
-                if pnl <= STOP_LOSS: to_sell.append((code, pr, '止损'))
-                elif pnl >= TAKE_PROFIT: to_sell.append((code, pr, '止盈'))
+                # 更新持仓的最高价
+                if pr > pos.get('peak', pos['cp']):
+                    pos['peak'] = pr
+                if pnl <= STOP_LOSS:
+                    to_sell.append((code, pr, '止损'))
+                elif exit_cfg['type'] == 'trailing':
+                    # 移动止盈逻辑
+                    profit_pct = (pr - pos['cp']) / pos['cp']
+                    peak = pos.get('peak', pos['cp'])
+                    drawdown_pct = (peak - pr) / peak if peak > 0 else 0
+                    # 找当前所在等级
+                    active_tier = None
+                    for tier in sorted(exit_cfg['tiers'], key=lambda t: -t['profit_pct']):
+                        if profit_pct >= tier['profit_pct']:
+                            active_tier = tier
+                            break
+                    if active_tier and drawdown_pct >= active_tier['trail_pct']:
+                        min_p = exit_cfg.get('min_profit_pct', 0.03)
+                        if profit_pct >= min_p:
+                            to_sell.append((code, pr, '跟踪止盈'))
+                else:
+                    # 固定止盈
+                    tp_pct = exit_cfg.get('take_profit_pct', TAKE_PROFIT)
+                    if pnl >= tp_pct:
+                        to_sell.append((code, pr, '止盈'))
         for code, pr, reason in to_sell:
             pos = positions.pop(code)
             sa = pos['shares']*pr*(1-SLIPPAGE); cm = sa*COMMISSION; cash += sa-cm
@@ -145,7 +187,7 @@ def backtest_strategy(all_data, dates, signal_func, params, name=""):
                 if sh <= 0: sh = 100
                 cost = sh*pr*(1+SLIPPAGE); cm = cost*COMMISSION
                 if cash >= cost+cm:
-                    cash -= cost+cm; positions[code] = {'shares':sh,'cp':pr,'bd':date}
+                    cash -= cost+cm; positions[code] = {'shares':sh,'cp':pr,'bd':date,'peak':pr}
                     trades.append({'dir':'B','code':code,'price':pr,'vol':sh,'profit':0,'reason':'策略信号','date':date})
         for code in list(positions.keys()):
             if code in all_sigs and date in all_sigs[code] and all_sigs[code][date]=='sell':
@@ -228,6 +270,7 @@ if __name__ == '__main__':
         ('dual_ma',         _adapter_close_only(signals_dual_ma)),
         ('enhanced_chip',   _adapter_full(signals_enhanced_chip)),
         ('pullback_stable', _adapter_full(signals_pullback_stable)),
+        ('trend_ma',        _adapter_close_only(signals_trend_ma)),
     ]
 
     results = {}

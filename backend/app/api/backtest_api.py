@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from ..core.database import get_db
 from ..core.config import get_settings
 from ..models.models import BacktestResult
+from ..schemas import BacktestRequest
 from ..services.backtest.backtest_service import BacktestEngine
 from ..services.backtest.market_backtest import MarketBacktestEngine
 from ..services.data.data_service import DataService
@@ -16,7 +17,7 @@ settings = get_settings()
 
 
 @router.post("/run", summary="执行回测")
-def run_backtest(data: dict, db: Session = Depends(get_db)):
+def run_backtest(data: BacktestRequest, db: Session = Depends(get_db)):
     """
     执行策略回测
     
@@ -43,53 +44,66 @@ def run_backtest(data: dict, db: Session = Depends(get_db)):
         "take_profit_pct": 0.15
     }
     """
-    mode = data.get("mode", "single")
     data_service = DataService(db, tushare_token=settings.TUSHARE_TOKEN)
-    
-    if mode == "market":
+
+    # 类型转换：前端传 stop_loss/take_profit 为字符串，需转为 float
+    stop_loss_val = None
+    if data.stop_loss:
+        try:
+            stop_loss_val = float(data.stop_loss)
+        except (ValueError, TypeError):
+            pass
+    take_profit_val = None
+    if data.take_profit:
+        try:
+            take_profit_val = float(data.take_profit)
+        except (ValueError, TypeError):
+            pass
+
+    if data.mode == "market":
         engine = MarketBacktestEngine(
             data_service=data_service,
-            initial_cash=data.get("initial_cash", 1000000),
-            commission=data.get("commission", 0.0003),
-            slippage=data.get("slippage", 0.001),
-            max_positions=data.get("max_positions", 10),
-            position_per_stock=data.get("position_per_stock", 0.2),
-            rebalance_interval=data.get("rebalance_interval", 1),
-            stop_loss_pct=data.get("stop_loss_pct", -0.08),
-            take_profit_pct=data.get("take_profit_pct", 0.15),
+            initial_cash=data.initial_cash,
+            commission=data.commission,
+            slippage=data.slippage,
+            max_positions=data.max_positions,
+            position_per_stock=data.position_per_stock,
+            rebalance_interval=data.rebalance_interval,
+            stop_loss_pct=data.stop_loss_pct,
+            take_profit_pct=data.take_profit_pct,
         )
-        strategies = data.get("strategies", ["dual_ma"])
+        strategies = data.strategies or ["dual_ma"]
         result = engine.run(
             strategy_types=strategies,
-            start_date=data.get("start_date"),
-            end_date=data.get("end_date"),
-            stock_limit=data.get("stock_limit", 200),
+            start_date=data.start_date,
+            end_date=data.end_date,
+            stock_limit=data.stock_limit,
         )
     else:
         engine = BacktestEngine(
             data_service=data_service,
-            initial_cash=data.get("initial_cash", 1000000),
-            commission=data.get("commission", 0.0003),
-            slippage=data.get("slippage", 0.001),
-            position_ratio=data.get("position_ratio", 1.0),
-            stop_loss_pct=data.get("stop_loss"),
-            take_profit_pct=data.get("take_profit"),
+            initial_cash=data.initial_cash,
+            commission=data.commission,
+            slippage=data.slippage,
+            position_ratio=data.position_ratio,
+            stop_loss_pct=stop_loss_val,
+            take_profit_pct=take_profit_val,
         )
-        strategy_type = data.get("strategy_type") or data.get("strategy")
+        strategy_type = data.strategy_type or data.strategy
         result = engine.run(
             strategy_type=strategy_type,
-            ts_code=data.get("ts_code"),
-            start_date=data.get("start_date"),
-            end_date=data.get("end_date"),
-            strategy_params=data.get("strategy_params"),
+            ts_code=data.ts_code,
+            start_date=data.start_date,
+            end_date=data.end_date,
+            strategy_params=data.strategy_params,
         )
 
     if "error" not in result:
         bt = BacktestResult(
-            strategy_id=data.get("strategy_id", 0),
-            start_date=data.get("start_date"),
-            end_date=data.get("end_date"),
-            initial_cash=result.get("initial_cash", data.get("initial_cash", 1000000)),
+            strategy_id=data.strategy_id,
+            start_date=data.start_date,
+            end_date=data.end_date,
+            initial_cash=result.get("initial_cash", data.initial_cash),
             final_value=result.get("final_value", 0),
             total_return=result.get("total_return", 0),
             annual_return=result.get("annual_return", 0),
@@ -104,7 +118,7 @@ def run_backtest(data: dict, db: Session = Depends(get_db)):
         db.add(bt)
         db.commit()
 
-    result["mode"] = mode
+    result["mode"] = data.mode
     return result
 
 

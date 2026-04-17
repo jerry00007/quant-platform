@@ -1,6 +1,9 @@
 """
-QuantWeave - 策略引擎
-内置策略：双均线交叉、布林带突破、RSI超买超卖、MACD金叉死叉
+QuantWeave - 策略引擎（旧版，已由 core_signals.py 替代）
+
+⚠️ 注意：此模块的策略类已弃用，仅保留用于兼容旧 API。
+新代码应使用 core_signals.py 中的 CORE_STRATEGIES 注册表。
+参数已同步到 core_signals.py 的最新值（如 long_period: 60）。
 """
 import pandas as pd
 import numpy as np
@@ -62,8 +65,8 @@ class DualMAStrategy(StrategyBase):
     name = "双均线交叉"
     description = "短期均线上穿长期均线买入，下穿卖出"
     params = {
-        "short_period": 7,   # V2优化: 5→7 减少假交叉，收益+12%→+48%
-        "long_period": 40,
+        "short_period": 7,   # V2优化: 5→7 减少假交叉
+        "long_period": 60,   # V3优化: 40→60 回测收益翻倍(+6.5%→+59.9%)
     }
 
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
