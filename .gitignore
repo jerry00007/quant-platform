@@ -20,6 +20,8 @@ build/
 
 # Databases
 *.db
+*.db-shm
+*.db-wal
 
 # Logs
 *.log
@@ -30,6 +32,7 @@ data_cache/
 # Generated reports
 reports/
 *.html
+!examples/*.html
 
 # Generated data files
 advanced_full_data.json
@@ -48,3 +51,7 @@ backend/.download_state.json
 archive/
 *.pyc
 __pycache__/
+
+# AI/Dev tools
+.codebuddy/
+.workbuddy/

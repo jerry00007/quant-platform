@@ -131,10 +131,14 @@ def get_dashboard(db: Session = Depends(get_db)):
     if latest_backtest and latest_backtest.equity_curve:
         equity_curve = latest_backtest.equity_curve
     if latest_backtest and latest_backtest.daily_returns:
-        strategy_returns = [
-            {"date": r.get("date", ""), "return": r.get("return", 0)}
-            for r in (latest_backtest.daily_returns or [])[:30]
-        ]
+        # daily_returns 可能是纯数字列表或 dict 列表
+        raw_returns = latest_backtest.daily_returns[:30] if isinstance(latest_backtest.daily_returns, list) else []
+        strategy_returns = []
+        for i, r in enumerate(raw_returns):
+            if isinstance(r, dict):
+                strategy_returns.append({"date": r.get("date", ""), "return": r.get("return", 0)})
+            else:
+                strategy_returns.append({"date": f"day_{i+1}", "return": float(r) if r else 0})
 
     return {
         # 资产概览

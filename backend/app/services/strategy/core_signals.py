@@ -1,20 +1,24 @@
 """
-QuantWeave 4大核心策略信号生成模块（共用）
+QuantWeave 5大核心策略信号生成模块（共用）
 
 回测引擎和选股 Skill 引用同一份策略逻辑，确保参数和信号一致。
 
 输入：numpy arrays (close, high, low, vol, open_) + dates list
 输出：dict {date_str: 'buy'/'sell'}
 
-策略参数（2026-04-15 回测最优）：
-  - 布林带上轨突破: period=25, std_mult=2.0, near_pct=0.02
-  - 双均线交叉: short_period=7, long_period=40
-  - 增强筹码策略: n_days=5, min_high=98, min_fall=5
-  - 强势股回调企稳: n_days=8, min_high=95, min_fall=5
+策略参数（2026-04-16 调优后最优）：
+  - 布林带上轨突破: period=25, std_mult=1.8（调优: 2.0→1.8）
+  - 双均线交叉: short_period=7, long_period=60（调优: 40→60）
+  - 增强筹码策略: n_days=5, min_high=98, min_fall=5（保持原版）
+  - 强势股回调企稳: n_days=8, min_high=95, min_fall=5（保持原版）
+  - 均线趋势跟踪: ma_period=15, confirm_days=3（新增，调优验证双正）
 """
 
 import numpy as np
+import logging
 from typing import Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Type alias
 SignalResult = Dict[str, str]
@@ -125,7 +129,7 @@ def signals_bollinger_upper(
     """
     p = params or {}
     period = p.get('period', 25)
-    std_mult = p.get('std_mult', 2.0)
+    std_mult = p.get('std_mult', 1.8)
     near_pct = p.get('near_pct', 0.02)
 
     signals = {}
@@ -149,8 +153,8 @@ def signals_bollinger_upper(
         # 买入：接近上轨 <2% 且在均线上方
         elif (upper - close[i]) / upper < near_pct and close[i] > ma:
             signals[dates[i]] = 'buy'
-        # 卖出：跌破中轨
-        if close[i - 1] >= ma and close[i] < ma:
+        # 卖出：跌破中轨（与买入互斥，同一交易日只产生一个信号）
+        elif close[i - 1] >= ma and close[i] < ma:
             signals[dates[i]] = 'sell'
         # 卖出：跌破下轨
         elif close[i] < lower:
@@ -174,11 +178,11 @@ def signals_dual_ma(
 
     Params:
         short_period: 短均线周期 (default 7)
-        long_period: 长均线周期 (default 40)
+        long_period: 长均线周期 (default 60)
     """
     p = params or {}
     sp = p.get('short_period', 7)
-    lp = p.get('long_period', 40)
+    lp = p.get('long_period', 60)
 
     signals = {}
     n = len(close)
@@ -321,7 +325,7 @@ def signals_pullback_stable(
     dates: List[str],
     params: Optional[dict] = None,
 ) -> SignalResult:
-    """强势股回调企稳策略（2年回测最优: +82.07%, 夏普1.459）
+    """强势股回调企稳策略（2年回测: +82.07%, 夏普1.459）
 
     买入条件:
       1. ZLCMQ 近N天曾达到 min_high 以上
@@ -401,7 +405,7 @@ def signals_pullback_stable(
         # 卖出：ZLCMQ 极低
         if cur_z < 20:
             signals[dates[i]] = 'sell'
-        # 卖出：跌破MA60（用过滤后的数据计算，等效于原始代码）
+        # 卖出：跌破MA60
         else:
             ma60w = c_arr[max(0, len(c_arr) - 60):]
             ma60w = ma60w[~np.isnan(ma60w)]
@@ -410,6 +414,52 @@ def signals_pullback_stable(
                 if i > 0 and not np.isnan(close[i - 1]) and close[i - 1] >= ma60 and cl < ma60:
                     signals[dates[i]] = 'sell'
 
+    return signals
+
+
+# ============================================================
+# 策略5: 均线趋势跟踪（调优新增 2026-04-16）
+# ============================================================
+
+def signals_trend_ma(
+    close: np.ndarray,
+    dates: List[str],
+    params: Optional[dict] = None,
+) -> SignalResult:
+    """均线趋势跟踪策略（训练+20.4%, 验证+20.7%）
+
+    买入: 股价在均线上方连续confirm_days天 + 均线向上拐头
+    卖出: 股价跌破均线
+
+    Params:
+        ma_period: 均线周期 (default 15)
+        confirm_days: 确认天数 (default 3)
+    """
+    p = params or {}
+    mp = p.get('ma_period', 15)
+    cd = p.get('confirm_days', 3)
+
+    signals = {}
+    n = len(close)
+    ma = np.full(n, np.nan)
+    for i in range(mp - 1, n):
+        w = close[i - mp + 1:i + 1]
+        w = w[~np.isnan(w)]
+        if len(w) >= mp:
+            ma[i] = np.mean(w)
+
+    in_pos = False
+    above = 0
+    for i in range(1, n):
+        if np.isnan(close[i]) or np.isnan(ma[i]) or np.isnan(ma[i - 1]):
+            continue
+        above = above + 1 if close[i] > ma[i] else 0
+        if not in_pos and above >= cd and ma[i] > ma[i - 1]:
+            signals[dates[i]] = 'buy'
+            in_pos = True
+        elif in_pos and close[i] < ma[i]:
+            signals[dates[i]] = 'sell'
+            in_pos = False
     return signals
 
 
@@ -423,7 +473,12 @@ CORE_STRATEGIES = {
         'func': signals_bollinger_upper,
         'needs': ['close'],  # 只需 close
         'default_params': {
-            'period': 25, 'std_mult': 2.0, 'near_pct': 0.02,
+            'period': 25, 'std_mult': 1.8, 'near_pct': 0.02,
+        },
+        # 止盈配置（回测已验证）
+        'exit_config': {
+            'type': 'fixed',           # 固定止盈
+            'take_profit_pct': 0.15,   # +15%
         },
     },
     'dual_ma': {
@@ -431,7 +486,12 @@ CORE_STRATEGIES = {
         'func': signals_dual_ma,
         'needs': ['close'],
         'default_params': {
-            'short_period': 7, 'long_period': 40,
+            'short_period': 7, 'long_period': 60,
+        },
+        # 止盈配置：固定15%最优（回测+101.44%，移动止盈反降到42-73%）
+        'exit_config': {
+            'type': 'fixed',
+            'take_profit_pct': 0.15,   # 固定+15%止盈
         },
     },
     'enhanced_chip': {
@@ -442,6 +502,10 @@ CORE_STRATEGIES = {
             'n_days': 5, 'min_high': 98, 'min_fall': 5,
             'chip_exit': 15, 'vol_surge_mult': 1.5,
         },
+        'exit_config': {
+            'type': 'fixed',
+            'take_profit_pct': 0.15,
+        },
     },
     'pullback_stable': {
         'name': '强势股回调企稳',
@@ -450,6 +514,28 @@ CORE_STRATEGIES = {
         'default_params': {
             'n_days': 8, 'min_high': 95, 'min_fall': 5,
             'stable_threshold': 3,
+        },
+        # 止盈配置：宽幅移动止盈v3最优（回测+99.55%/夏普1.591，比固定82%多赚17%）
+        'exit_config': {
+            'type': 'trailing',        # 移动止盈
+            'tiers': [
+                {'profit_pct': 0.05, 'trail_pct': 0.05},   # 赚5%启动，回撤5%卖出
+                {'profit_pct': 0.15, 'trail_pct': 0.03},   # 赚15%收紧，回撤3%卖出
+                {'profit_pct': 0.30, 'trail_pct': 0.02},   # 赚30%极紧，回撤2%卖出
+            ],
+            'min_profit_pct': 0.03,     # 最低锁定+3%
+        },
+    },
+    'trend_ma': {
+        'name': '均线趋势跟踪',
+        'func': signals_trend_ma,
+        'needs': ['close'],
+        'default_params': {
+            'ma_period': 15, 'confirm_days': 3,
+        },
+        'exit_config': {
+            'type': 'fixed',
+            'take_profit_pct': 0.15,
         },
     },
 }
@@ -463,3 +549,46 @@ def get_strategy(key: str) -> dict:
 def list_strategies() -> list:
     """列出所有策略 key"""
     return list(CORE_STRATEGIES.keys())
+
+
+def check_strategy_sell(key: str, df_dict: dict, ts_code: str = "") -> Optional[str]:
+    """统一策略卖出信号检查
+
+    Args:
+        key: 策略key（如 'dual_ma', 'pullback_stable'）
+        df_dict: 包含 close/high/low/vol/open/trade_date 的DataFrame
+        ts_code: 股票代码（日志用）
+
+    Returns:
+        卖出原因字符串，无卖出信号时返回 None
+    """
+    cfg = CORE_STRATEGIES.get(key)
+    if cfg is None:
+        return None
+
+    func = cfg["func"]
+    params = cfg["default_params"]
+    needs = cfg.get("needs", ["close"])
+
+    df = df_dict.sort_values("trade_date") if "trade_date" in df_dict.columns else df_dict
+    closes = df["close"].values.astype(float)
+    dates = df["trade_date"].astype(str).tolist()
+
+    try:
+        if set(needs) >= {"close", "high", "low", "vol", "open"}:
+            high = df["high"].values.astype(float) if "high" in df.columns else closes.copy()
+            low = df["low"].values.astype(float) if "low" in df.columns else closes.copy()
+            vol = df["vol"].values.astype(float) if "vol" in df.columns else np.zeros(len(df))
+            open_ = df["open"].values.astype(float) if "open" in df.columns else closes.copy()
+            signals = func(closes, high, low, vol, open_, dates, params)
+        else:
+            signals = func(closes, dates, params)
+    except Exception as e:
+        logger.warning(f"策略 {key} 信号计算失败 [{ts_code}]: {e}")
+        return None
+
+    # 检查最近一个交易日是否有卖出信号
+    if dates and dates[-1] in signals and signals[dates[-1]] == "sell":
+        return f"{cfg['name']}卖出信号"
+
+    return None

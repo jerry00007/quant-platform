@@ -1,6 +1,6 @@
 /**
- * QuantWeave 每日信号页面
- * 功能：显示次日操作建议、止损止盈位、生成微信通知
+ * QuantWeave 持仓个股页面
+ * 功能：显示持仓个股的次日操作建议、止损止盈位、生成微信通知
  */
 
 let refreshInterval = null;
@@ -9,8 +9,8 @@ async function renderSignals() {
   const main = document.getElementById('mainContent');
   main.innerHTML = `
     <div class="page-header">
-      <h2>📡 每日信号</h2>
-      <p>基于多策略的次日操作建议系统</p>
+      <h2>📡 持仓个股</h2>
+      <p>基于核心策略的持仓个股操作建议</p>
     </div>
     
     <div id="signalsContent">
@@ -24,21 +24,24 @@ async function renderSignals() {
             <div class="form-group">
               <label class="form-label">股票池</label>
               <select id="stockPoolSelect" class="form-select">
-                <option value="watchlist" selected>关注列表</option>
-                <option value="all">全市场扫描</option>
-                <option value="custom">自定义...</option>
+                <option value="portfolio" selected>📦 我的持仓</option>
+                <option value="watchlist">👁️ 关注列表</option>
+                <option value="tracking_pool">📋 跟踪池</option>
+                <option value="all">🌐 全市场扫描</option>
+                <option value="custom">✏️ 自定义...</option>
               </select>
-              <div class="form-help" id="stockPoolHelp">默认使用您关注的股票</div>
+              <div class="form-help" id="stockPoolHelp">正在加载持仓...</div>
             </div>
             
             <div class="form-group">
               <label class="form-label">策略组合</label>
               <select id="strategyGroupSelect" class="form-select">
-                <option value="all" selected>全部策略</option>
-                <option value="trend">趋势策略</option>
-                <option value="chip">筹码策略</option>
-                <option value="reversal">反转策略</option>
-                <option value="custom">自定义...</</option>
+                <option value="all" selected>🚀 全部策略（共振优先）</option>
+                <option value="dual_ma">📈 双均线交叉(7/60)</option>
+                <option value="pullback_stable">🔄 回调企稳(8/95/5)</option>
+                <option value="bollinger_upper">📊 布林带突破(25/1.8)</option>
+                <option value="enhanced_chip">🧮 增强筹码(5/98/5)</option>
+                <option value="trend_ma">📉 均线趋势(15/3)</option>
               </select>
             </div>
           </div>
@@ -155,8 +158,15 @@ async function renderSignals() {
     </div>
   `;
   
+  loadPortfolioInfo();
   loadSystemInfo();
   setupAutoRefresh();
+  
+  // 监听股票池切换，更新帮助文本
+  const poolSelect = document.getElementById('stockPoolSelect');
+  if (poolSelect) {
+    poolSelect.addEventListener('change', () => updatePoolHelp(poolSelect.value));
+  }
 }
 
 function setupAutoRefresh() {
@@ -176,6 +186,88 @@ function stopAutoRefresh() {
     clearInterval(refreshInterval);
     refreshInterval = null;
   }
+}
+
+// 当前持仓缓存
+let _cachedPositions = null;
+
+async function loadPortfolioInfo() {
+  const helpEl = document.getElementById('stockPoolHelp');
+  if (!helpEl) return;
+  
+  try {
+    const resp = await API.getPositions();
+    if (resp && resp.error) {
+      helpEl.textContent = '⚠️ 持仓数据加载失败';
+      return;
+    }
+    
+    const data = resp?.data || resp;
+    const positions = data?.positions || data?.items || [];
+    _cachedPositions = positions;
+    
+    if (positions.length === 0) {
+      helpEl.textContent = '📦 当前无持仓';
+      return;
+    }
+    
+    const names = positions.map(p => p.name || p.stock_name || p.ts_code).join('、');
+    helpEl.textContent = `📦 持仓 ${positions.length} 只：${names}`;
+  } catch (err) {
+    helpEl.textContent = '⚠️ 持仓数据加载失败';
+    _cachedPositions = null;
+  }
+}
+
+function updatePoolHelp(poolType) {
+  const helpEl = document.getElementById('stockPoolHelp');
+  if (!helpEl) return;
+  
+  switch (poolType) {
+    case 'portfolio':
+      if (_cachedPositions && _cachedPositions.length > 0) {
+        const names = _cachedPositions.map(p => p.name || p.stock_name || p.ts_code).join('、');
+        helpEl.textContent = `📦 持仓 ${_cachedPositions.length} 只：${names}`;
+      } else {
+        helpEl.textContent = '📦 当前无持仓';
+      }
+      break;
+    case 'watchlist':
+      helpEl.textContent = '👁️ 关注列表中的股票（需先添加关注）';
+      break;
+    case 'tracking_pool':
+      helpEl.textContent = '📋 跟踪池中状态为 tracking 的股票';
+      break;
+    case 'all':
+      helpEl.textContent = '🌐 全市场约5000只股票扫描，耗时较长';
+      break;
+    case 'custom':
+      helpEl.textContent = '✏️ 请在下方输入股票代码，多个用逗号分隔（如：000001.SZ,600519.SH）';
+      // 动态插入输入框
+      showCustomInput();
+      return;
+    default:
+      helpEl.textContent = '';
+  }
+  // 移除自定义输入框（如果存在）
+  removeCustomInput();
+}
+
+function showCustomInput() {
+  if (document.getElementById('customStockInput')) return;
+  const helpEl = document.getElementById('stockPoolHelp');
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.id = 'customStockInput';
+  input.className = 'form-input';
+  input.style.marginTop = '8px';
+  input.placeholder = '输入股票代码，逗号分隔，如：000001.SZ,600519.SH';
+  helpEl.parentNode.appendChild(input);
+}
+
+function removeCustomInput() {
+  const existing = document.getElementById('customStockInput');
+  if (existing) existing.remove();
 }
 
 async function loadSystemInfo() {
@@ -232,19 +324,47 @@ async function generateSignals() {
   if (summary) summary.innerHTML = '<div class="loading"><div class="spinner"></div>扫描中...</div>';
   if (details) details.innerHTML = '<div class="loading"><div class="spinner"></div>生成详细建议...</div>';
   
-  const stockPool = document.getElementById('stockPoolSelect')?.value || 'watchlist';
+  const stockPool = document.getElementById('stockPoolSelect')?.value || 'portfolio';
   const strategyGroup = document.getElementById('strategyGroupSelect')?.value || 'all';
   
   try {
-    // 传递用户筛选的参数
+    // 根据股票池类型解析实际股票代码
     let stocksParam = null;
     let strategiesParam = null;
     
-    if (stockPool === 'watchlist') {
+    if (stockPool === 'portfolio') {
+      // 从缓存中取持仓代码
+      if (_cachedPositions && _cachedPositions.length > 0) {
+        stocksParam = _cachedPositions.map(p => p.ts_code).join(',');
+      } else {
+        // 缓存为空则实时拉取
+        const resp = await API.getPositions();
+        const data = resp?.data || resp;
+        const positions = data?.positions || data?.items || [];
+        if (positions.length === 0) {
+          if (summary) summary.innerHTML = '<div class="empty">📦 当前无持仓，请先添加持仓或切换其他股票池</div>';
+          if (btn) btn.disabled = false;
+          return;
+        }
+        stocksParam = positions.map(p => p.ts_code).join(',');
+      }
+    } else if (stockPool === 'tracking_pool') {
+      // 跟踪池：从后端 tracking_pool 接口获取（或用 signals 接口的特殊参数）
+      // 暂时通过 scan 接口 + tracking_pool 标记来实现
+      stocksParam = 'tracking_pool';
+    } else if (stockPool === 'watchlist') {
       stocksParam = 'watchlist';
-    } else if (stockPool === 'all') {
-      stocksParam = null; // 不传参=全市场
+    } else if (stockPool === 'custom') {
+      const customInput = document.getElementById('customStockInput');
+      const customVal = customInput?.value?.trim();
+      if (!customVal) {
+        if (summary) summary.innerHTML = '<div class="empty">✏️ 请输入自定义股票代码</div>';
+        if (btn) btn.disabled = false;
+        return;
+      }
+      stocksParam = customVal;
     }
+    // stockPool === 'all' 时不传参，全市场扫描
     
     if (strategyGroup !== 'all') {
       strategiesParam = strategyGroup;
@@ -411,16 +531,18 @@ function renderSignalsDetails(data) {
 }
 
 async function analyzeSignal(ts_code) {
-  // 使用选股模块的分析功能
-  if (typeof analyzeStock === 'function') {
+  // 使用全局统一分析入口
+  if (typeof openStockAnalysisModal === 'function') {
+    await openStockAnalysisModal(ts_code, '');
+  } else if (typeof analyzeStock === 'function') {
     await analyzeStock(ts_code);
   } else {
-    // 备用方法
+    // 最终备用方法
     try {
       const data = await API.analyzeStock(ts_code);
-      alert(`分析完成: ${ts_code}\n建议: ${data.recommendation?.action || '无'}`);
+      showToast(`分析完成: ${ts_code} — 建议: ${data.recommendation?.action || '无'}`, 'success');
     } catch (err) {
-      alert(`分析失败: ${err.message}`);
+      showToast(`分析失败: ${err.message}`, 'error');
     }
   }
 }
@@ -464,14 +586,14 @@ function copyWechatText() {
 async function sendTestNotification() {
   const text = document.getElementById('wechatText')?.value;
   if (!text) {
-    alert('请先生成微信通知文本');
+    showToast('请先生成微信通知文本', 'warning');
     return;
   }
   
   if (!confirm('将要向测试通道发送通知，确定继续吗？')) return;
   
   // 这里应该调用后端通知API，但目前后端只支持钉钉/企微/邮件
-  alert('⚠️ 微信个人通知功能需额外配置，目前仅支持企业微信/钉钉渠道\n\n请复制文本手动发送微信');
+  showToast('⚠️ 微信个人通知功能需额外配置，目前仅支持企业微信/钉钉渠道，请复制文本手动发送微信', 'warning');
 }
 
 function showScheduleDialog() {
@@ -488,7 +610,7 @@ async function saveSchedule() {
   const timeInput = document.getElementById('reminderTime');
   const time = timeInput?.value || '09:30';
   
-  alert(`定时提醒已设置为 ${time} \n\n注：实际执行需后端配置定时任务`);
+  showToast(`✅ 定时提醒已设置为 ${time}（注：实际执行需后端配置定时任务）`, 'success');
   
   // 这里应该调用后端API配置定时任务
   // 但后端scheduler_service.py已经有一个9:15的数据同步任务，需要添加9:30的提醒任务

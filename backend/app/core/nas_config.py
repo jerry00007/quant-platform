@@ -3,23 +3,31 @@
 包含MySQL和Redis连接配置
 """
 
+import os
+from pathlib import Path
 from typing import Dict, Any
+from dotenv import load_dotenv
 import redis
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool
 
-# NAS服务器配置
-NAS_MYSQL_HOST = "192.168.0.222"
-NAS_MYSQL_PORT = 3306
-NAS_MYSQL_USER = "root"
-NAS_MYSQL_PASSWORD = "123456"
-NAS_MYSQL_DATABASE = "quantweave"
+# 确保 .env 被加载（Pydantic Settings 只在自己的类中加载，os.getenv 读不到）
+_env_file = Path(__file__).resolve().parent.parent.parent / ".env"
+if _env_file.exists():
+    load_dotenv(_env_file, override=False)
 
-# NAS Redis配置
-NAS_REDIS_HOST = "192.168.0.222"
-NAS_REDIS_PORT = 6379
-NAS_REDIS_DB = 0
+# NAS服务器配置 — 从环境变量读取（不再硬编码）
+NAS_MYSQL_HOST = os.getenv("NAS_MYSQL_HOST", "192.168.0.222")
+NAS_MYSQL_PORT = int(os.getenv("NAS_MYSQL_PORT", "3306"))
+NAS_MYSQL_USER = os.getenv("NAS_MYSQL_USER", "root")
+NAS_MYSQL_PASSWORD = os.getenv("NAS_MYSQL_PASSWORD", "")
+NAS_MYSQL_DATABASE = os.getenv("NAS_MYSQL_DATABASE", "quantweave")
+
+# NAS Redis配置 — 从环境变量读取（不再硬编码）
+NAS_REDIS_HOST = os.getenv("NAS_REDIS_HOST", "192.168.0.222")
+NAS_REDIS_PORT = int(os.getenv("NAS_REDIS_PORT", "6379"))
+NAS_REDIS_DB = int(os.getenv("NAS_REDIS_DB", "0"))
 
 # MySQL连接URL
 NAS_DATABASE_URL = f"mysql+pymysql://{NAS_MYSQL_USER}:{NAS_MYSQL_PASSWORD}@{NAS_MYSQL_HOST}:{NAS_MYSQL_PORT}/{NAS_MYSQL_DATABASE}"

@@ -5,18 +5,43 @@
 const API = {
   BASE: 'http://localhost:8000/api/v1',
 
-  async request(path, options = {}) {
+  /**
+   * 统一请求方法
+   * @param {string} path - API路径
+   * @param {object} options - fetch选项
+   * @param {number} timeout - 超时毫秒数（默认30秒）
+   * @returns {object|null} 成功返回数据，失败返回 { error: true, message, status }
+   */
+  async request(path, options = {}, timeout = 30000) {
     const url = `${this.BASE}${path}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+
     try {
       const resp = await fetch(url, {
         headers: { 'Content-Type': 'application/json', ...options.headers },
+        signal: controller.signal,
         ...options,
       });
-      if (!resp.ok) throw new Error(`API ${resp.status}: ${resp.statusText}`);
+      if (!resp.ok) {
+        // 尝试解析后端错误信息
+        let detail = resp.statusText;
+        try {
+          const errBody = await resp.json();
+          detail = errBody.detail || errBody.message || resp.statusText;
+        } catch (_) { /* 后端没返回JSON */ }
+        return { error: true, message: `API ${resp.status}: ${detail}`, status: resp.status };
+      }
       return await resp.json();
     } catch (err) {
+      if (err.name === 'AbortError') {
+        console.warn(`API请求超时: ${path} (${timeout}ms)`);
+        return { error: true, message: `请求超时（${Math.round(timeout/1000)}秒），请检查后端服务`, status: 0 };
+      }
       console.warn(`API请求失败: ${path}`, err);
-      return null;
+      return { error: true, message: `网络错误: ${err.message}`, status: 0 };
+    } finally {
+      clearTimeout(timer);
     }
   },
 
@@ -44,7 +69,7 @@ const API = {
 
   // ========== 回测 ==========
   async runBacktest(data) {
-    return this.request('/backtest/run', { method: 'POST', body: JSON.stringify(data) });
+    return this.request('/backtest/run', { method: 'POST', body: JSON.stringify(data) }, 300000);
   },
   async getBacktestHistory() {
     return this.request('/backtest/results');
@@ -103,6 +128,18 @@ const API = {
     return this.request('/screening/presets');
   },
 
+  async quickPicks() {
+    return this.request('/screening/quick-picks', {}, 300000);
+  },
+
+  async triggerQuickPicks() {
+    return this.request('/screening/quick-picks/trigger', { method: 'POST' }, 30000);
+  },
+
+  async getLatestQuickPicks() {
+    return this.request('/screening/quick-picks/latest', {}, 15000);
+  },
+
   // ========== 每日信号 ==========
   async getDailySignals(stocks = null, strategies = null) {
     let params = [];
@@ -134,7 +171,7 @@ const API = {
 
   // ========== 数据中心 ==========
   async syncStockList() {
-    return this.request('/data/stocks/sync', { method: 'POST' });
+    return this.request('/data/stocks/sync', { method: 'POST' }, 120000);
   },
   async getStocks(keyword = null, page = 1, size = 20) {
     let params = [`page=${page}`, `size=${size}`];
@@ -154,10 +191,24 @@ const API = {
     });
   },
   async syncAllDaily(startDate, endDate, limit = 50) {
-    return this.request(`/data/sync-all-daily?start_date=${startDate}&end_date=${endDate}&limit=${limit}`, { method: 'POST' });
+    return this.request(`/data/sync-all-daily?start_date=${startDate}&end_date=${endDate}&limit=${limit}`, { method: 'POST' }, 600000);
   },
   async getDataStatus() {
     return this.request('/data/status');
+  },
+
+  // ========== 实时行情 ==========
+  async getMarketOverview() {
+    return this.request('/market/overview', {}, 20000);
+  },
+  async getMarketIndices() {
+    return this.request('/market/indices');
+  },
+  async getMarketBreadth() {
+    return this.request('/market/breadth');
+  },
+  async getMarketSectors(topN = 15) {
+    return this.request(`/market/sectors?top_n=${topN}`);
   },
 
   // ========== 持仓管理 ==========

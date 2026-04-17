@@ -11,6 +11,14 @@ function formatNumber(num) {
   return Number(num).toLocaleString('zh-CN', { maximumFractionDigits: 0 });
 }
 
+/**
+ * HTML 转义（防 XSS）— 全局定义
+ */
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function showToast(msg, type = 'info') {
   const container = document.getElementById('toastContainer');
   const toast = document.createElement('div');
@@ -22,6 +30,11 @@ function showToast(msg, type = 'info') {
 
 // ========== 路由 ==========
 function navigateTo(page) {
+  // 页面离开时的清理
+  if (currentPage === 'market' && page !== 'market') {
+    if (typeof destroyMarket === 'function') destroyMarket();
+  }
+
   currentPage = page;
   renderSidebar();
   const renderers = {
