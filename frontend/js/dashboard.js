@@ -260,7 +260,7 @@ function renderDashAnalysis(data) {
     ${rec.reason ? `
       <div style="background:var(--surface);border-radius:var(--radius);padding:16px;margin-bottom:16px">
         <strong>🎯 综合建议：</strong>
-        <span class="tag ${rec.action === 'buy' ? 'tag-green' : rec.action === 'sell' ? 'tag-red' : 'tag-gray'}">
+        <span class="tag ${rec.action === 'buy' ? 'tag-red' : rec.action === 'sell' ? 'tag-green' : 'tag-gray'}">
           ${rec.level || '—'}
         </span>
         <p style="margin-top:8px;color:var(--text-secondary)">${rec.reason}</p>

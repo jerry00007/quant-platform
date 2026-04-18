@@ -69,30 +69,32 @@ def quick_picks(
 @router.post("/quick-picks/trigger", summary="触发一键选股扫描（后台执行）")
 def trigger_quick_picks(
     background_tasks: BackgroundTasks,
+    force: bool = Query(False, description="强制重新扫描，忽略今日已有结果"),
     db: Session = Depends(get_db),
 ):
     """
     触发一键选股扫描 — 后台异步执行，立即返回
     扫描结果存入 scan_results 表，前端通过 /quick-picks/latest 获取
+    默认同一天不重复扫描，传 force=true 可强制重扫
     """
-    # 检查是否已有今天的扫描结果
-    from ..services.screening.quick_picks_service import get_latest_scan_result
-    from pathlib import Path
-    db_path = Path(__file__).resolve().parent.parent.parent.parent / "quantweave.db"
-    latest = get_latest_scan_result(db_path)
-    
-    if latest:
-        import re
-        scan_date = latest.get("scan_time", "")[:10]
-        from datetime import date
-        today = date.today().isoformat()
-        if scan_date == today:
-            return {
-                "status": "already_done",
-                "message": f"今日已扫描过 (id={latest['id']}, 时间={latest['scan_time']})",
-                "latest_id": latest["id"],
-                "scan_time": latest["scan_time"],
-            }
+    # 检查是否已有今天的扫描结果（非强制模式下跳过）
+    if not force:
+        from ..services.screening.quick_picks_service import get_latest_scan_result
+        from pathlib import Path
+        db_path = Path(__file__).resolve().parent.parent.parent.parent / "quantweave.db"
+        latest = get_latest_scan_result(db_path)
+        
+        if latest:
+            from datetime import date
+            scan_date = latest.get("scan_time", "")[:10]
+            today = date.today().isoformat()
+            if scan_date == today:
+                return {
+                    "status": "already_done",
+                    "message": f"今日已扫描过 (id={latest['id']}, 时间={latest['scan_time']})",
+                    "latest_id": latest["id"],
+                    "scan_time": latest["scan_time"],
+                }
 
     # 后台执行扫描
     service = QuickPicksService(db)

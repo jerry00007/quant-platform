@@ -107,6 +107,21 @@ const API = {
     return this.request('/risk/dashboard');
   },
 
+  // ========== 风控排雷 ==========
+  async scanPortfolioRisks(force = false) {
+    return this.request(`/risk/scan/portfolio?force=${force}`, {}, 120000);
+  },
+  async scanStockRisks(tsCodes, force = false) {
+    return this.request('/risk/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ts_codes: tsCodes, force }),
+    }, 120000);
+  },
+  async runRiskSnapshot(force = false) {
+    return this.request(`/risk/snapshot?force=${force}`, { method: 'POST' }, 600000);
+  },
+
   // ========== 系统 ==========
   async getHealth() {
     return this.request('/system/health');
@@ -132,8 +147,9 @@ const API = {
     return this.request('/screening/quick-picks', {}, 300000);
   },
 
-  async triggerQuickPicks() {
-    return this.request('/screening/quick-picks/trigger', { method: 'POST' }, 30000);
+  async triggerQuickPicks(force = false) {
+    const url = force ? '/screening/quick-picks/trigger?force=true' : '/screening/quick-picks/trigger';
+    return this.request(url, { method: 'POST' }, 30000);
   },
 
   async getLatestQuickPicks() {

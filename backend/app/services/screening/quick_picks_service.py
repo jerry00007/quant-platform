@@ -208,6 +208,7 @@ class QuickPicksService:
                         latest_signal = max(buy_signals, key=lambda s: s["date"])
                         risk = self._calculate_risk(df)
                         entry = self._calculate_entry_points(df)
+                        score_data = self._calculate_composite_score(df, industry_map.get(ts_code, ""))
 
                         all_results[key].append({
                             "ts_code": ts_code,
@@ -216,6 +217,7 @@ class QuickPicksService:
                             "signal": latest_signal,
                             "risk": risk,
                             "entry_points": entry,
+                            "score": score_data,
                         })
 
                         if ts_code not in stock_signal_count:
@@ -231,12 +233,36 @@ class QuickPicksService:
         finally:
             conn.close()
 
-        # 4. 多策略共振检测
+        # 4. 风控排雷（前置过滤）
+        all_signal_codes = list(set(
+            tc for picks in all_results.values() for tc in [p["ts_code"] for p in picks]
+        ))
+        risk_data = {}
+        blocked_codes = set()
+        if all_signal_codes:
+            try:
+                from app.services.risk.risk_filter_service import RiskFilterService
+                risk_svc = RiskFilterService(self._db_path)
+                safe_codes, risk_data = risk_svc.filter_stocks(all_signal_codes)
+                blocked_codes = set(all_signal_codes) - set(safe_codes)
+                if blocked_codes:
+                    logger.info(f"🛡️ 风控排除: {len(blocked_codes)}只 → {list(blocked_codes)[:5]}...")
+                    # 从策略信号中移除被排除的股票
+                    for key in all_results:
+                        all_results[key] = [p for p in all_results[key] if p["ts_code"] not in blocked_codes]
+                    # 从信号计数中移除
+                    for tc in blocked_codes:
+                        stock_signal_count.pop(tc, None)
+            except Exception as e:
+                logger.warning(f"风控扫描失败（跳过）: {e}")
+
+        # 5. 多策略共振检测（含评分+风控标记）
         resonance = []
         for ts_code, strategies_hit in stock_signal_count.items():
             if len(strategies_hit) >= 2:
                 stock_data = {"ts_code": ts_code, "name": name_map.get(ts_code, "")}
                 hit_details = []
+                best_score = None
                 for key in strategies_hit:
                     for r in all_results[key]:
                         if r["ts_code"] == ts_code:
@@ -244,6 +270,10 @@ class QuickPicksService:
                                 "strategy": ACTIVE_STRATEGIES[key]["name"],
                                 "reason": r["signal"]["reason"],
                             })
+                            # 取最高评分（可能不同策略给出不同评分，取最高）
+                            s = r.get("score", {})
+                            if best_score is None or s.get("total", 0) > best_score.get("total", 0):
+                                best_score = s
                             break
                 stock_data["hit_count"] = len(strategies_hit)
                 stock_data["strategies"] = hit_details
@@ -254,11 +284,24 @@ class QuickPicksService:
                             stock_data["risk"] = r["risk"]
                             stock_data["entry_points"] = r["entry_points"]
                             stock_data["price"] = r["signal"]["price"]
+                            if not best_score:
+                                best_score = r.get("score", {})
                             break
                     break
+                # 写入评分数据
+                if best_score:
+                    stock_data["score"] = best_score
+                else:
+                    stock_data["score"] = {"total": 0, "advice": "—", "icon": "⚪"}
+                # 风控标记
+                rd = risk_data.get(ts_code, {})
+                stock_data["risk_flags"] = rd.get("flags", [])
+                stock_data["risk_level"] = rd.get("risk_level", "safe")
+                stock_data["risk_summary"] = rd.get("summary", "")
                 resonance.append(stock_data)
 
-        resonance.sort(key=lambda x: x.get("hit_count", 0), reverse=True)
+        # 按综合评分排序（不再是简单 hit_count）
+        resonance.sort(key=lambda x: x.get("score", {}).get("total", 0), reverse=True)
 
         # 5. 行业分布
         all_picks = []
@@ -282,12 +325,26 @@ class QuickPicksService:
         }
 
         for key in ACTIVE_STRATEGIES:
-            sorted_picks = sorted(all_results[key], key=lambda x: x["signal"]["date"], reverse=True)
+            sorted_picks = sorted(all_results[key], key=lambda x: x.get("score", {}).get("total", 0), reverse=True)
+            # 给每只信号股添加风控标记
+            for p in sorted_picks:
+                rd = risk_data.get(p["ts_code"], {})
+                p["risk_flags"] = rd.get("flags", [])
+                p["risk_level"] = rd.get("risk_level", "safe")
+                p["risk_summary"] = rd.get("summary", "")
             result["strategies"][key] = {
                 "name": ACTIVE_STRATEGIES[key]["name"],
                 "top_picks": sorted_picks,
                 "total_signals": len(all_results[key]),
             }
+
+        # 风控统计
+        result["risk_summary"] = {
+            "blocked_count": len(blocked_codes),
+            "blocked_codes": list(blocked_codes),
+            "warning_count": sum(1 for v in risk_data.values() if v.get("risk_level") in ("warning",)),
+            "safe_count": sum(1 for v in risk_data.values() if v.get("risk_level") == "safe"),
+        }
 
         return result
 
@@ -381,6 +438,210 @@ class QuickPicksService:
         elif key == "pullback_stable":
             return "ZLCMQ极低或跌破MA60"
         return f"{strat_cfg['name']}卖出信号"
+
+    @staticmethod
+    def _calculate_composite_score(df: pd.DataFrame, industry: str = "") -> dict:
+        """
+        StockSense AI 多维度评分 — 与 batch_analyze.py / stock-sense-ai skill 一致
+        技术面30% + 基本面25% + 消息面20% + 资金面15% = 综合得分
+        
+        Returns: dict with score breakdown + advice + key indicators
+        """
+        if len(df) < 60:
+            return {"total": 0, "advice": "数据不足", "icon": "⚪"}
+
+        closes = df["close"].values.astype(float)
+        highs = df["high"].values.astype(float) if "high" in df.columns else closes.copy()
+        lows = df["low"].values.astype(float) if "low" in df.columns else closes.copy()
+        vols = df["vol"].values.astype(float) if "vol" in df.columns else np.ones(len(df))
+        changes = df["change_pct"].values.astype(float) if "change_pct" in df.columns else np.zeros(len(df))
+
+        last_close = closes[-1]
+
+        # ===== 技术面 (30%) =====
+        tech_score = 50
+        ma5 = np.mean(closes[-5:])
+        ma10 = np.mean(closes[-10:])
+        ma20 = np.mean(closes[-20:])
+        ma60 = np.mean(closes[-60:])
+
+        # 均线排列
+        if ma5 > ma10 > ma20 > ma60:
+            tech_score += 15
+        elif ma5 > ma10 > ma20:
+            tech_score += 10
+        elif ma5 > ma10:
+            tech_score += 5
+
+        # MACD 金叉/死叉
+        ema12, ema26 = float(closes[0]), float(closes[0])
+        dif_list = []
+        for c in closes:
+            ema12 = float(c) * 2 / 13 + ema12 * 11 / 13
+            ema26 = float(c) * 2 / 27 + ema26 * 25 / 27
+            dif_list.append(ema12 - ema26)
+        dif_arr = np.array(dif_list)
+        dea_arr = np.zeros(len(dif_arr))
+        for i in range(1, len(dif_arr)):
+            dea_arr[i] = dif_arr[i] * 2 / 10 + dea_arr[i - 1] * 8 / 10
+        macd_cross = "金叉" if dif_arr[-1] > dea_arr[-1] else "死叉"
+        if dif_arr[-1] > dea_arr[-1]:
+            tech_score += 10
+        macd_bar = (dif_arr - dea_arr) * 2
+        if len(macd_bar) >= 3 and macd_bar[-1] < macd_bar[-2] and dif_arr[-1] > dea_arr[-1]:
+            tech_score -= 5  # MACD动能减弱
+
+        # RSI
+        deltas = np.diff(closes[-15:])
+        gains = np.where(deltas > 0, deltas, 0)
+        losses_arr = np.where(deltas < 0, -deltas, 0)
+        avg_gain = np.mean(gains[-14:])
+        avg_loss = np.mean(losses_arr[-14:])
+        rsi = 100 - (100 / (1 + avg_gain / avg_loss)) if avg_loss > 0 else 100
+        if 40 <= rsi <= 60:
+            tech_score += 10
+        elif 30 <= rsi <= 70:
+            tech_score += 5
+        elif rsi > 80:
+            tech_score -= 10
+        elif rsi > 70:
+            tech_score -= 5
+
+        # 量比
+        vol5 = np.mean(vols[-5:])
+        vol20 = np.mean(vols[-20:])
+        vol_ratio = vol5 / vol20 if vol20 > 0 else 1
+        if 0.8 <= vol_ratio <= 1.5:
+            tech_score += 10
+        elif vol_ratio > 2:
+            tech_score -= 5
+
+        # MA60偏离
+        ma60_dev = (last_close / ma60 - 1) * 100
+        if abs(ma60_dev) < 5:
+            tech_score += 5
+        elif ma60_dev > 15:
+            tech_score -= 10
+
+        tech_score = min(100, max(0, tech_score))
+
+        # ===== 基本面 (25%) =====
+        base_score = 50
+        daily_returns = changes[-30:] if len(changes) >= 30 else changes
+        volatility = np.std(daily_returns) if len(daily_returns) > 0 else 0
+        if volatility < 1.5:
+            base_score += 15
+        elif volatility < 2.5:
+            base_score += 10
+        elif volatility < 4:
+            base_score += 0
+        else:
+            base_score -= 10
+
+        high60 = max(closes[-60:])
+        low60 = min(closes[-60:])
+        price_pos = (last_close - low60) / (high60 - low60) * 100 if high60 != low60 else 50
+        if 30 <= price_pos <= 70:
+            base_score += 15
+        elif price_pos > 85:
+            base_score -= 10
+        elif price_pos < 20:
+            base_score += 10
+
+        # 趋势斜率
+        y = closes[-20:]
+        x = np.arange(len(y))
+        slope = np.polyfit(x, y, 1)[0]
+        trend_pct = slope / last_close * 100
+        if 0 < trend_pct < 0.3:
+            base_score += 10
+        elif trend_pct >= 0.3:
+            base_score += 5
+        elif -0.1 < trend_pct <= 0:
+            base_score += 5
+        else:
+            base_score -= 5
+
+        base_score = min(100, max(0, base_score))
+
+        # ===== 消息面 (20%) =====
+        news_score = 50
+        hot_kw = ["半导体", "人工智能", "软件", "通信", "新能源", "军工", "医药", "机器人", "信息", "电子"]
+        if any(h in (industry or "") for h in hot_kw):
+            news_score += 15
+        chg5 = (last_close / closes[-6] - 1) * 100 if len(closes) >= 6 else 0
+        if 0 < chg5 < 5:
+            news_score += 15
+        elif chg5 >= 5:
+            news_score += 5
+        elif -2 < chg5 <= 0:
+            news_score += 5
+        elif chg5 <= -5:
+            news_score -= 10
+        news_score = min(100, max(0, news_score))
+
+        # ===== 资金面 (15%) =====
+        fund_score = 50
+        if vol_ratio > 1.5:
+            fund_score += 15
+        elif vol_ratio > 1:
+            fund_score += 10
+        elif vol_ratio > 0.7:
+            fund_score += 0
+        else:
+            fund_score -= 5
+
+        today_chg = changes[-1] if len(changes) > 0 else 0
+        if 0 < today_chg < 3:
+            fund_score += 15
+        elif 3 <= today_chg < 6:
+            fund_score += 10
+        elif today_chg >= 6:
+            fund_score += 0
+        elif -1 < today_chg <= 0:
+            fund_score += 5
+        else:
+            fund_score -= 10
+
+        fund_score = min(100, max(0, fund_score))
+
+        # ===== 综合 =====
+        total_score = round(
+            tech_score * 0.30 + base_score * 0.25 + news_score * 0.20 + fund_score * 0.15, 1
+        )
+
+        if total_score >= 80:
+            advice, icon = "强烈买入", "🔥🔥"
+        elif total_score >= 65:
+            advice, icon = "买入/加仓", "🟢"
+        elif total_score >= 50:
+            advice, icon = "持有观望", "🟡"
+        elif total_score >= 35:
+            advice, icon = "减仓", "🟠"
+        else:
+            advice, icon = "卖出", "🔴"
+
+        ma_status = (
+            "多头"
+            if ma5 > ma10 > ma20 > ma60
+            else ("短多" if ma5 > ma10 else "震荡")
+        )
+
+        return {
+            "total": total_score,
+            "tech": tech_score,
+            "base": base_score,
+            "news": news_score,
+            "fund": fund_score,
+            "advice": advice,
+            "icon": icon,
+            "rsi": round(float(rsi), 1),
+            "vol_ratio": round(float(vol_ratio), 2),
+            "ma60_dev": round(float(ma60_dev), 1),
+            "macd": macd_cross,
+            "ma_status": ma_status,
+            "today_chg": round(float(today_chg), 2),
+        }
 
     @staticmethod
     def _calculate_risk(df: pd.DataFrame) -> dict:

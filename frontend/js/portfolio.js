@@ -54,8 +54,8 @@ async function loadPortfolioData() {
 
 function renderPortfolioPage(container, account, positions, health) {
   const totalValue = positions.reduce((sum, p) => sum + (p.market_value || 0), 0);
-  const totalCost = positions.reduce((sum, p) => sum + (p.cost_value || 0), 0);
-  const totalProfit = totalValue - totalCost;
+  const totalCost = positions.reduce((sum, p) => sum + (p.cost_value || (p.avg_cost || 0) * (p.volume || 0)), 0);
+  const totalProfit = positions.reduce((sum, p) => sum + (p.profit || 0), 0);
   const profitPct = totalCost > 0 ? (totalProfit / totalCost * 100) : 0;
 
   // 计算持仓相关统计
@@ -122,11 +122,12 @@ function renderPortfolioPage(container, account, positions, health) {
           </thead>
           <tbody>
             ${positions.map(p => {
-              const profit = (p.market_value || 0) - (p.cost_value || 0);
-              const profitPct = (p.cost_value || 0) > 0 ? (profit / p.cost_value * 100) : 0;
+              const cost = p.cost_value || (p.avg_cost || 0) * (p.volume || 0);
+              const profit = p.profit || (p.market_value || 0) - cost;
+              const profitPct = p.profit_pct || (cost > 0 ? (profit / cost * 100) : 0);
               const directionTag = p.direction === 'long' 
-                ? '<span class="tag tag-green">多头</span>' 
-                : '<span class="tag tag-red">空头</span>';
+                ? '<span class="tag tag-red">多头</span>'
+                : '<span class="tag tag-green">空头</span>';
               return `
                 <tr>
                   <td style="font-weight:600">${p.ts_code}</td>
@@ -585,12 +586,12 @@ function renderTransactionList(container, transactions, total) {
 
 function getTransactionTypeTag(type) {
   const tags = {
-    'buy': '<span class="tag tag-green">买入</span>',
-    'sell': '<span class="tag tag-red">卖出</span>',
+    'buy': '<span class="tag tag-red">买入</span>',
+    'sell': '<span class="tag tag-green">卖出</span>',
     'deposit': '<span class="tag tag-blue">入金</span>',
     'withdraw': '<span class="tag tag-orange">出金</span>',
-    'open': '<span class="tag tag-green">开仓</span>',
-    'close': '<span class="tag tag-red">平仓</span>',
+    'open': '<span class="tag tag-red">开仓</span>',
+    'close': '<span class="tag tag-green">平仓</span>',
     'cover': '<span class="tag tag-orange">还券</span>',
   };
   return tags[type] || `<span class="tag tag-gray">${type}</span>`;

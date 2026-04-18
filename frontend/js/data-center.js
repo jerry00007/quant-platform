@@ -570,6 +570,7 @@ async function syncHistoricalData() {
       resultEl.innerHTML = `
         <div style="margin-top:12px;padding:12px;background:rgba(34,197,94,0.1);border-radius:8px;border:1px solid rgba(34,197,94,0.3)">
           <div style="color:#22C55E;font-weight:600">✅ 同步完成</div>
+
           <div style="color:#94A3B8;font-size:13px;margin-top:4px">
             成功保存 ${result.saved} 条数据
             ${result.results ? `（成功 ${result.results.filter(r => r.status === 'success').length} 只）` : ''}
