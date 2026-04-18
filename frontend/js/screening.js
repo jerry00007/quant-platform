@@ -233,21 +233,97 @@ function startFullScan() {
 }
 
 // ========== 一键选股（异步模式） ==========
+
+async function forceRescan() {
+  const btn = document.getElementById('quickPicksBtn');
+  const resultDiv = document.getElementById('quickPicksResult');
+  if (!resultDiv) return;
+  if (btn) { btn.disabled = true; btn.innerHTML = '⏳ 重新扫描中...'; }
+  resultDiv.style.display = 'block';
+  resultDiv.innerHTML = '<div class="loading" style="padding:40px;text-align:center"><div class="spinner" style="margin:0 auto 16px"></div><div>强制重新扫描中...<br><span style="font-size:12px;color:var(--text-muted)">预计约2~3分钟完成</span></div></div>';
+
+  try {
+    const forceResp = await API.triggerQuickPicks(true);
+    console.log('[QuickPicks] force rescan response:', forceResp);
+
+    if (forceResp && forceResp.error) {
+      resultDiv.innerHTML = `<div style="text-align:center;padding:40px;color:var(--color-down)"><strong>触发失败</strong><p style="margin-top:8px">${forceResp.message || '未知错误'}</p></div>`;
+      if (btn) { btn.disabled = false; btn.textContent = '🚀 开始选股'; }
+      return;
+    }
+
+    // 轮询等待新结果
+    let attempts = 0;
+    const maxAttempts = 25;
+    const pollInterval = 10000;
+    const startTime = Date.now();
+
+    const poll = async () => {
+      attempts++;
+      try {
+        const latest = await API.getLatestQuickPicks();
+        if (latest && latest.status === 'ok' && latest.scan_time) {
+          // 检查 scan_time 是否比触发时间更新（允许2秒误差）
+          const scanTs = new Date(latest.scan_time).getTime();
+          if (scanTs >= startTime - 2000) {
+            const pollDiv = document.getElementById('quickPicksResult');
+            if (!pollDiv) return;
+            pollDiv.style.display = 'block';
+            renderQuickPicksResult(latest.result, pollDiv, latest.scan_time);
+            if (btn) { btn.disabled = false; btn.textContent = '🚀 开始选股'; }
+            showToast('✅ 重新扫描完成！', 'success');
+            return;
+          }
+        }
+      } catch (e) { /* 忽略轮询错误 */ }
+      if (attempts < maxAttempts) {
+        const pDiv = document.getElementById('quickPicksResult');
+        if (pDiv) pDiv.innerHTML = `<div class="loading" style="padding:40px;text-align:center"><div class="spinner" style="margin:0 auto 16px"></div><div>重新扫描中... (${attempts * 10}秒)<br><span style="font-size:12px;color:var(--text-muted)">预计还需约${Math.max(1, Math.round((maxAttempts - attempts) * 10 / 60))}分钟</span></div></div>`;
+        setTimeout(poll, pollInterval);
+      } else {
+        const pDiv = document.getElementById('quickPicksResult');
+        if (pDiv) pDiv.innerHTML = `<div style="text-align:center;padding:40px;color:var(--color-warning)"><strong>⏳ 扫描时间较长</strong><p style="margin-top:8px">请稍后刷新页面查看结果</p></div>`;
+        if (btn) { btn.disabled = false; btn.textContent = '🚀 开始选股'; }
+      }
+    };
+    setTimeout(poll, 15000);
+  } catch (err) {
+    const errDiv = document.getElementById('quickPicksResult');
+    if (errDiv) errDiv.innerHTML = `<div style="text-align:center;padding:40px;color:var(--color-down)"><strong>扫描失败</strong><p style="margin-top:8px">${err.message || '未知错误'}</p></div>`;
+    if (btn) { btn.disabled = false; btn.textContent = '🚀 开始选股'; }
+  }
+}
+
 async function loadLatestQuickPicks() {
   const resultDiv = document.getElementById('quickPicksResult');
   if (!resultDiv) return;
 
   try {
     const data = await API.getLatestQuickPicks();
-    if (!data || data.status === 'no_data') return;
-    if (data.error) return;
+    console.log('[QuickPicks] latest response:', data?.status, data?.scan_time);
+    if (!data || data.status === 'no_data') {
+      console.log('[QuickPicks] 无数据');
+      return;
+    }
+    if (data.error) {
+      console.warn('[QuickPicks] API error:', data.message);
+      return;
+    }
     
-    // 有历史数据，直接渲染
-    resultDiv.style.display = 'block';
-    renderQuickPicksResult(data.result, resultDiv, data.scan_time);
+    // 有历史数据，直接渲染（重新获取DOM引用，防止页面已切换）
+    const currentDiv = document.getElementById('quickPicksResult');
+    if (!currentDiv) return;
+    currentDiv.style.display = 'block';
+    console.log('[QuickPicks] 渲染结果, resonance:', (data.result?.resonance || []).length, 'strategies:', Object.keys(data.result?.strategies || {}).length);
+    try {
+      renderQuickPicksResult(data.result, currentDiv, data.scan_time);
+    } catch (innerErr) {
+      console.error('[QuickPicks] 渲染失败:', innerErr.message);
+      try { currentDiv.innerHTML = '<div style="padding:20px;color:var(--color-down)">渲染出错，请刷新页面重试</div>'; } catch(ie) {}
+    }
   } catch (err) {
     // 静默失败，不阻塞页面
-    console.warn('加载最新选股结果失败:', err.message);
+    console.warn('[QuickPicks] 加载失败:', err.message);
   }
 }
 
@@ -256,6 +332,7 @@ async function runQuickPicks() {
   const resultDiv = document.getElementById('quickPicksResult');
   if (btn && btn.disabled) return;
 
+  if (!resultDiv) return;  // 页面已切换，安全退出
   if (btn) { btn.disabled = true; btn.innerHTML = '⏳ 扫描已启动...'; }
   resultDiv.style.display = 'block';
   resultDiv.innerHTML = '<div class="loading" style="padding:40px;text-align:center"><div class="spinner" style="margin:0 auto 16px"></div><div>后台扫描已启动...<br><span style="font-size:12px;color:var(--text-muted)">双均线+回调企稳策略分析中，预计约2~3分钟<br>你可以先浏览其他页面，稍后回来查看结果</span></div></div>';
@@ -271,10 +348,22 @@ async function runQuickPicks() {
     }
 
     if (triggerResp.status === 'already_done') {
-      // 今天已经扫过了，直接加载结果
-      showToast(`今日已扫描过，直接加载结果`, 'info');
+      // 今天已经扫过了，直接显示已有结果
+      console.log('[QuickPicks] already_done, loading cached result');
       await loadLatestQuickPicks();
       if (btn) { btn.disabled = false; btn.textContent = '🚀 开始选股'; }
+      // 在结果顶部加一个提示条
+      const resultArea = document.getElementById('quickPicksResult');
+      if (resultArea && resultArea.style.display !== 'none') {
+        const existingHtml = resultArea.innerHTML;
+        resultArea.innerHTML = `
+          <div style="padding:10px 16px;background:rgba(59,130,246,0.1);border-radius:8px 8px 0 0;font-size:13px;color:var(--text-secondary);display:flex;justify-content:space-between;align-items:center">
+            <span>📅 今日已扫描过（${triggerResp.scan_time || ''}），以下为最新结果</span>
+            <button class="btn btn-sm btn-outline" onclick="forceRescan()" style="white-space:nowrap">🔄 强制重新扫描</button>
+          </div>
+          ${existingHtml}
+        `;
+      }
       return;
     }
 
@@ -287,12 +376,14 @@ async function runQuickPicks() {
       attempts++;
       try {
         const latest = await API.getLatestQuickPicks();
-        if (latest && latest.status === 'ok' && latest.scan_time) {
+          if (latest && latest.status === 'ok' && latest.scan_time) {
           // 检查是否是新扫描的结果
           const scanTime = latest.scan_time;
           if (triggerResp.status === 'scanning' || scanTime) {
-            resultDiv.style.display = 'block';
-            renderQuickPicksResult(latest.result, resultDiv, latest.scan_time);
+            const pollDiv = document.getElementById('quickPicksResult');
+            if (!pollDiv) return;
+            pollDiv.style.display = 'block';
+            renderQuickPicksResult(latest.result, pollDiv, latest.scan_time);
             if (btn) { btn.disabled = false; btn.textContent = '🚀 开始选股'; }
             showToast('✅ 选股扫描完成！', 'success');
             return;
@@ -302,10 +393,12 @@ async function runQuickPicks() {
 
       if (attempts < maxAttempts) {
         // 更新等待提示
-        resultDiv.innerHTML = `<div class="loading" style="padding:40px;text-align:center"><div class="spinner" style="margin:0 auto 16px"></div><div>后台扫描中... (${attempts * 10}秒)<br><span style="font-size:12px;color:var(--text-muted)">预计还需 ${Math.max(1, Math.round((maxAttempts * 10 - attempts * 10) / 10))} 分钟内完成</span></div></div>`;
+        const pDiv2 = document.getElementById('quickPicksResult');
+        if (pDiv2) pDiv2.innerHTML = `<div class="loading" style="padding:40px;text-align:center"><div class="spinner" style="margin:0 auto 16px"></div><div>后台扫描中... (${attempts * 10}秒)<br><span style="font-size:12px;color:var(--text-muted)">预计还需 ${Math.max(1, Math.round((maxAttempts * 10 - attempts * 10) / 10))} 分钟内完成</span></div></div>`;
         setTimeout(poll, pollInterval);
       } else {
-        resultDiv.innerHTML = `<div style="text-align:center;padding:40px;color:var(--color-warning)"><strong>⏳ 扫描时间较长</strong><p style="margin-top:8px">请稍后刷新页面查看结果，或点击重新选股</p></div>`;
+        const pDiv2 = document.getElementById('quickPicksResult');
+        if (pDiv2) pDiv2.innerHTML = `<div style="text-align:center;padding:40px;color:var(--color-warning)"><strong>⏳ 扫描时间较长</strong><p style="margin-top:8px">请稍后刷新页面查看结果，或点击重新选股</p></div>`;
         if (btn) { btn.disabled = false; btn.textContent = '🚀 开始选股'; }
       }
     };
@@ -314,46 +407,76 @@ async function runQuickPicks() {
     setTimeout(poll, 15000);
 
   } catch (err) {
-    resultDiv.innerHTML = `<div style="text-align:center;padding:40px;color:var(--color-down)"><strong>扫描失败</strong><p style="margin-top:8px">${err.message || '未知错误'}</p></div>`;
+    const errDiv = document.getElementById('quickPicksResult');
+    if (errDiv) errDiv.innerHTML = `<div style="text-align:center;padding:40px;color:var(--color-down)"><strong>扫描失败</strong><p style="margin-top:8px">${err.message || '未知错误'}</p></div>`;
     if (btn) { btn.disabled = false; btn.textContent = '🚀 开始选股'; }
   }
 }
 
 function renderQuickPicksResult(data, container, scanTime) {
-  if (!data) { container.innerHTML = '<div style="padding:20px;color:var(--text-muted)">无数据</div>'; return; }
+  if (!container) return;
+  if (!data) { try { container.innerHTML = '<div style="padding:20px;color:var(--text-muted)">无数据</div>'; } catch(e) {} return; }
 
   const resonance = data.resonance || [];
   const strategies = data.strategies || {};
   const industry = data.industry_distribution || {};
-
-  // 如果信号特别多，各策略只展示 Top10
   const MAX_PER_STRATEGY = 10;
 
-  let html = `
+  let html = '';
+  try {
+    html = `
     <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
       <div class="card-title" style="margin-bottom:0">📋 一键选股结果${scanTime ? ` <span style="font-size:12px;color:var(--text-muted);font-weight:normal">— 扫描时间: ${scanTime}</span>` : ''}</div>
       <div style="font-size:13px;color:var(--text-muted)">
         数据日期: ${data.data_date || '—'} | 扫描: ${data.total_stocks_scanned || 0}只 | 信号: ${data.total_signals_found || 0}只
+        ${data.risk_summary ? ` | <span style="color:var(--color-down)">🚫排除${data.risk_summary.blocked_count || 0}</span> <span style="color:var(--color-warning)">⚠️警告${data.risk_summary.warning_count || 0}</span> <span style="color:var(--color-up)">🛡️安全${data.risk_summary.safe_count || 0}</span>` : ''}
       </div>
     </div>
   `;
 
-  // ===== 共振股（最亮眼） =====
+  // ===== 共振股（最亮眼 — 按综合评分排序） =====
   if (resonance.length > 0) {
     const displayResonance = resonance.slice(0, 10);
     html += `
-      <div style="margin-bottom:20px;padding:16px;background:linear-gradient(135deg,rgba(34,197,94,0.1),rgba(59,130,246,0.08));border-radius:var(--radius);border:1px solid rgba(34,197,94,0.3)">
-        <div style="font-weight:700;font-size:16px;margin-bottom:12px;color:var(--color-up)">🔥 多策略共振 — 最值得关注 (${resonance.length}只${resonance.length > 10 ? '，展示前10' : ''})</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px">
-          ${displayResonance.map(s => `
-            <div class="quick-pick-card" style="padding:12px;background:var(--color-background);border-radius:var(--radius);border:1px solid var(--border);cursor:pointer" onclick="analyzeStock('${escapeHtml(s.ts_code)}')">
+      <div style="margin-bottom:20px;padding:16px;background:linear-gradient(135deg,rgba(239,68,68,0.1),rgba(59,130,246,0.08));border-radius:var(--radius);border:1px solid rgba(239,68,68,0.3)">
+        <div style="font-weight:700;font-size:16px;margin-bottom:12px;color:var(--color-up)">🔥 多策略共振 — 按AI评分排序 (${resonance.length}只${resonance.length > 10 ? '，展示前10' : ''})</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px">
+          ${displayResonance.map((s, idx) => {
+            const sc = s.score || {};
+            const scoreTotal = sc.total || 0;
+            const scoreIcon = sc.icon || '⚪';
+            const scoreAdvice = sc.advice || '—';
+            const scoreColor = scoreTotal >= 65 ? 'var(--color-up)' : (scoreTotal >= 50 ? 'var(--color-warning)' : 'var(--color-down)');
+            return `
+            <div class="quick-pick-card" style="padding:12px;background:var(--color-background);border-radius:var(--radius);border:1px solid ${scoreTotal >= 65 ? 'rgba(239,68,68,0.4)' : 'var(--border)'};cursor:pointer" onclick="analyzeStock('${escapeHtml(s.ts_code)}')">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
                 <div>
                   <strong style="font-size:15px">${s.name || '—'}</strong>
                   <code style="font-family:var(--font-mono);font-size:12px;color:var(--text-muted);margin-left:6px">${s.ts_code}</code>
                 </div>
-                <span class="tag tag-green" style="font-size:12px">⚡ ${s.hit_count}策略共振</span>
+                <div style="display:flex;align-items:center;gap:6px">
+                  <span class="tag tag-green" style="font-size:11px">⚡${s.hit_count}策略</span>
+                  <span style="font-size:16px;font-weight:700;color:${scoreColor}">${scoreIcon} ${scoreTotal}</span>
+                </div>
               </div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                <span style="padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;background:${scoreTotal >= 65 ? 'rgba(239,68,68,0.2);color:var(--color-up)' : (scoreTotal >= 50 ? 'rgba(245,158,11,0.2);color:var(--color-warning)' : 'rgba(34,197,94,0.2);color:var(--color-down)')}">${scoreAdvice}</span>
+                ${sc.rsi != null ? `<span style="font-size:11px;color:var(--text-muted)">RSI:${sc.rsi}</span>` : ''}
+                ${sc.macd ? `<span style="font-size:11px;color:${sc.macd === '金叉' ? 'var(--color-up)' : 'var(--color-down)'}">MACD:${sc.macd}</span>` : ''}
+                ${sc.ma_status ? `<span style="font-size:11px;color:var(--text-muted)">均线:${sc.ma_status}</span>` : ''}
+                ${sc.today_chg != null ? `<span style="font-size:11px;color:${sc.today_chg >= 0 ? 'var(--color-up)' : 'var(--color-down)'}">${sc.today_chg >= 0 ? '+' : ''}${sc.today_chg}%</span>` : ''}
+              </div>
+              ${scoreTotal > 0 ? `
+              <div style="display:flex;gap:4px;margin-bottom:8px;font-size:11px">
+                <span style="color:var(--text-muted)">技术:${sc.tech}</span>
+                <span style="color:var(--text-muted)">|</span>
+                <span style="color:var(--text-muted)">基本:${sc.base}</span>
+                <span style="color:var(--text-muted)">|</span>
+                <span style="color:var(--text-muted)">消息:${sc.news}</span>
+                <span style="color:var(--text-muted)">|</span>
+                <span style="color:var(--text-muted)">资金:${sc.fund}</span>
+              </div>
+              ` : ''}
               <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">
                 ${(s.strategies || []).map(st => `<span class="tag tag-purple" style="font-size:11px">${st.strategy}: ${st.reason}</span>`).join('')}
               </div>
@@ -366,8 +489,20 @@ function renderQuickPicksResult(data, container, scanTime) {
                 ${s.entry_points.target_1 ? `<div style="margin-top:6px;font-size:12px"><span style="color:var(--text-muted)">目标1:</span> <strong style="font-family:var(--font-mono);color:var(--color-up)">¥${s.entry_points.target_1}</strong></div>` : ''}
               ` : ''}
               ${s.risk && !s.risk.pass ? `<div style="margin-top:6px;font-size:11px;color:var(--color-down)">⚠️ ${(s.risk.warnings || []).join('、')}</div>` : ''}
+              ${(() => {
+                const rl = s.risk_level || 'safe';
+                if (rl === 'safe') {
+                  return '<div style="margin-top:6px;font-size:11px;display:flex;align-items:center;gap:4px"><span style="color:var(--color-up)">🛡️ 风控安全</span></div>';
+                } else if (rl === 'warning') {
+                  const summ = s.risk_summary || '';
+                  return `<div style="margin-top:6px;font-size:11px;display:flex;align-items:center;gap:4px"><span style="color:var(--color-warning)">⚠️ ${summ || '有风控警告'}</span></div>`;
+                } else {
+                  const summ = s.risk_summary || '';
+                  return `<div style="margin-top:6px;font-size:11px;display:flex;align-items:center;gap:4px"><span style="color:var(--color-down)">🚫 ${summ || '已排除'}</span></div>`;
+                }
+              })()}
             </div>
-          `).join('')}
+          `}).join('')}
         </div>
       </div>
     `;
@@ -384,11 +519,12 @@ function renderQuickPicksResult(data, container, scanTime) {
     html += `
       <details style="margin-bottom:12px;background:var(--surface);border-radius:var(--radius);padding:12px 16px" ${displayPicks.length <= 10 ? 'open' : ''}>
         <summary style="cursor:pointer;font-weight:600;font-size:14px;margin-bottom:${displayPicks.length <= 10 ? '12px' : '0'}">
-          ${info.name} — ${info.total_signals}只信号${isLongList ? ` (展示Top${MAX_PER_STRATEGY})` : ''}
+          ${info.name} — ${info.total_signals}只信号 (按AI评分排序${isLongList ? `，展示Top${MAX_PER_STRATEGY}` : ''})
         </summary>
         <table class="data-table" style="margin-top:8px">
           <thead>
             <tr>
+              <th>评分</th>
               <th>代码</th>
               <th>名称</th>
               <th>行业</th>
@@ -404,15 +540,37 @@ function renderQuickPicksResult(data, container, scanTime) {
               const risk = p.risk || {};
               const entry = p.entry_points || {};
               const riskOk = risk.pass !== false;
+              const sc = p.score || {};
+              const scoreTotal = sc.total || 0;
+              const scoreIcon = sc.icon || '⚪';
+              const scoreAdvice = sc.advice || '—';
+              const riskLevel = p.risk_level || 'safe';
+              const riskSummary = p.risk_summary || '';
+              let riskBadge = '';
+              if (riskLevel === 'safe') {
+                riskBadge = '<span style="color:var(--color-up)">🛡️安全</span>';
+              } else if (riskLevel === 'warning') {
+                riskBadge = `<span style="color:var(--color-warning)" title="${escapeHtml(riskSummary)}">⚠️警告</span>`;
+              } else {
+                riskBadge = `<span style="color:var(--color-down)" title="${escapeHtml(riskSummary)}">🚫排除</span>`;
+              }
               return `
                 <tr>
+                  <td>
+                    <div style="font-weight:700;color:${scoreTotal >= 65 ? 'var(--color-up)' : (scoreTotal >= 50 ? 'var(--color-warning)' : 'var(--color-down)')}">${scoreIcon} ${scoreTotal}</div>
+                    <div style="font-size:10px;color:var(--text-muted)">${scoreAdvice}</div>
+                  </td>
                   <td><code style="font-family:var(--font-mono);font-size:12px">${p.ts_code}</code></td>
                   <td><strong>${p.name || '—'}</strong></td>
                   <td style="font-size:13px;color:var(--text-muted)">${p.industry || '—'}</td>
                   <td style="font-family:var(--font-mono)">¥${p.signal?.price?.toFixed(2) || '—'}</td>
                   <td style="font-family:var(--font-mono);font-size:12px">${p.signal?.date || '—'}</td>
                   <td style="font-size:12px">${p.signal?.reason || '—'}</td>
-                  <td>${riskOk ? '<span style="color:var(--color-up)">✅</span>' : '<span style="color:var(--color-down)" title="' + escapeHtml((risk.warnings || []).join('、')) + '">⚠️</span>'}</td>
+                  <td>
+                    <div>${riskBadge}</div>
+                    ${riskSummary && riskLevel !== 'safe' ? `<div style="font-size:10px;color:var(--text-muted);max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(riskSummary)}">${escapeHtml(riskSummary)}</div>` : ''}
+                    ${!riskOk ? `<div style="font-size:10px;color:var(--color-down)">⚠️${(risk.warnings || []).join('、')}</div>` : ''}
+                  </td>
                   <td>
                     <button class="btn btn-sm btn-primary" onclick="analyzeStock('${escapeHtml(p.ts_code)}')">分析</button>
                     <button class="btn btn-sm btn-outline" onclick="quickAddWatchlistByCode('${escapeHtml(p.ts_code)}','${escapeHtml(p.name || '')}')">⭐</button>
@@ -448,11 +606,28 @@ function renderQuickPicksResult(data, container, scanTime) {
       💡 策略说明: 
       <strong>双均线(7/60)</strong> — MA7上穿MA60金叉买入，回测+101% |
       <strong>回调企稳(8/95/5)</strong> — ZLCMQ达到95后回调企稳，回测+100%。
-      <span style="color:var(--color-down)">仅供投资参考，不构成投资建议。</span>
+      <br>🛡️ 风控排雷: 自动过滤ST/*ST | 业绩预告首亏/预减/续亏 | 大股东减持>1% | 连续亏损 | 高负债率 | 财报窗口期预警
+      <br><span style="color:var(--color-down)">仅供投资参考，不构成投资建议。</span>
     </div>
   `;
+  } catch (buildErr) {
+    console.error('[QuickPicks] HTML构建失败:', buildErr.message, buildErr.stack);
+    if (container) container.innerHTML = `<div style="padding:20px;color:var(--color-down)">渲染出错: ${buildErr.message}</div>`;
+    return;
+  }
 
-  container.innerHTML = html;
+  // 最终安全检查
+  if (!container) {
+    console.warn('[QuickPicks] container became null before innerHTML assignment');
+    return;
+  }
+  try {
+    container.innerHTML = html;
+    console.log('[QuickPicks] 渲染完成, html length:', html.length);
+  } catch (renderErr) {
+    console.error('[QuickPicks] innerHTML assignment failed:', renderErr.message);
+    container.innerHTML = '<div style="padding:20px;color:var(--text-muted)">渲染结果时出错，请刷新页面重试</div>';
+  }
 }
 
 // ========== 预设和策略加载 ==========
@@ -637,10 +812,10 @@ function renderResults(results) {
 }
 
 function getScoreColor(score) {
-  if (score >= 150) return '#22C55E';
+  if (score >= 150) return '#EF4444';
   if (score >= 100) return '#3B82F6';
   if (score >= 50) return '#F59E0B';
-  return '#EF4444';
+  return '#22C55E';
 }
 
 // ========== 个股深度分析（全局统一入口） ==========
@@ -809,7 +984,7 @@ function renderAnalysis(data) {
       <div style="margin-bottom:20px;padding:16px;background:var(--surface);border-radius:var(--radius);border-left:3px solid ${rec.action === 'buy' ? 'var(--color-up)' : rec.action === 'sell' ? 'var(--color-down)' : 'var(--color-warning)'}">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
           <strong>🎯 综合建议</strong>
-          <span class="tag ${rec.action === 'buy' ? 'tag-green' : rec.action === 'sell' ? 'tag-red' : 'tag-gray'}">
+          <span class="tag ${rec.action === 'buy' ? 'tag-red' : rec.action === 'sell' ? 'tag-green' : 'tag-gray'}">
             ${rec.level || '—'}
           </span>
         </div>
@@ -818,13 +993,13 @@ function renderAnalysis(data) {
           <div>
             <span style="font-size:12px;color:var(--text-muted)">买入策略</span>
             <div style="margin-top:4px">
-              ${(rec.buy_strategies || []).length > 0 ? rec.buy_strategies.map(s => `<span class="tag tag-green" style="font-size:11px">${s}</span>`).join(' ') : '<span style="color:var(--text-muted);font-size:13px">无</span>'}
+              ${(rec.buy_strategies || []).length > 0 ? rec.buy_strategies.map(s => `<span class="tag tag-red" style="font-size:11px">${s}</span>`).join(' ') : '<span style="color:var(--text-muted);font-size:13px">无</span>'}
             </div>
           </div>
           <div>
             <span style="font-size:12px;color:var(--text-muted)">卖出策略</span>
             <div style="margin-top:4px">
-              ${(rec.sell_strategies || []).length > 0 ? rec.sell_strategies.map(s => `<span class="tag tag-red" style="font-size:11px">${s}</span>`).join(' ') : '<span style="color:var(--text-muted);font-size:13px">无</span>'}
+              ${(rec.sell_strategies || []).length > 0 ? rec.sell_strategies.map(s => `<span class="tag tag-green" style="font-size:11px">${s}</span>`).join(' ') : '<span style="color:var(--text-muted);font-size:13px">无</span>'}
             </div>
           </div>
         </div>
@@ -854,7 +1029,7 @@ function renderAnalysis(data) {
               ${sigs.slice(0, 20).map(s => `
                 <div style="padding:6px 10px;border-radius:4px;margin-bottom:4px;display:flex;align-items:center;gap:10px;font-size:13px;border-left:3px solid ${s.signal === 'buy' ? 'var(--color-up)' : 'var(--color-down)'}">
                   <span style="font-family:var(--font-mono);color:var(--text-muted);min-width:70px">${s.date}</span>
-                  <span class="tag ${s.signal === 'buy' ? 'tag-green' : 'tag-red'}" style="font-size:11px">${s.signal === 'buy' ? '买入' : '卖出'}</span>
+                  <span class="tag ${s.signal === 'buy' ? 'tag-red' : 'tag-green'}" style="font-size:11px">${s.signal === 'buy' ? '买入' : '卖出'}</span>
                   <span style="color:var(--text-secondary)">${s.reason || '—'}</span>
                 </div>
               `).join('')}

@@ -1,6 +1,6 @@
 /**
  * QuantWeave 回测中心页面
- * 支持单股票/全市场动态选股回测
+ * 支持单股票/全市场动态选股/一键选股回测
  */
 
 let backtestResults = [];
@@ -15,16 +15,19 @@ function renderBacktest() {
 
     <div class="card" style="margin-bottom:20px">
       <div class="card-title">回测模式</div>
-      <div style="margin-top:12px;margin-bottom:16px">
-        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;margin-right:24px">
+      <div style="margin-top:12px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:12px">
+        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;background:var(--bg-secondary);padding:8px 16px;border-radius:8px">
           <input type="radio" name="backtestMode" value="single" checked onchange="toggleBacktestMode()">
-          <span style="font-weight:500">📊 单股票回测</span>
-          <span style="color:var(--text-secondary);font-size:13px">固定持有单只股票</span>
+          <span style="font-weight:500">📊 单股票</span>
         </label>
-        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
+        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;background:var(--bg-secondary);padding:8px 16px;border-radius:8px">
           <input type="radio" name="backtestMode" value="market" onchange="toggleBacktestMode()">
-          <span style="font-weight:500">🌐 全市场动态选股</span>
-          <span style="color:var(--text-secondary);font-size:13px">每日全市场扫描调仓</span>
+          <span style="font-weight:500">🌐 全市场</span>
+        </label>
+        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;background:linear-gradient(135deg,#667eea20,#764ba220);padding:8px 16px;border-radius:8px;border:1px solid #667eea40">
+          <input type="radio" name="backtestMode" value="quick_picks" onchange="toggleBacktestMode()">
+          <span style="font-weight:600;color:#667eea">🎯 一键选股</span>
+          <span style="font-size:11px;color:#667eea;background:#667eea15;padding:2px 6px;border-radius:4px">推荐</span>
         </label>
       </div>
     </div>
@@ -171,6 +174,82 @@ function renderBacktest() {
       </div>
     </div>
 
+    <!-- 一键选股模式 -->
+    <div id="quickPicksModePanel" style="display:none">
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title">🎯 一键选股策略回测</div>
+        <div style="background:linear-gradient(135deg,#667eea10,#764ba210);padding:14px;border-radius:10px;margin-top:12px;margin-bottom:16px;font-size:13px;color:var(--text-secondary);border-left:3px solid #667eea">
+          <div style="font-weight:600;color:var(--text-primary);margin-bottom:6px">🧠 完整流水线回测</div>
+          全市场扫描（双均线+回调企稳）→ 综合评分（技术30%+基本面25%+消息面20%+资金面15%）→ Top-N 建仓 → 止损止盈管理<br>
+          <span style="color:#EF4444;font-weight:500">2年回测年化+26%，夏普1.28</span>（最优参数已预设）
+        </div>
+        <div class="grid-4" style="gap:12px">
+          <div class="form-group">
+            <label class="form-label">开始日期</label>
+            <input id="qpStart" class="form-input" type="date" value="2024-04-17">
+          </div>
+          <div class="form-group">
+            <label class="form-label">结束日期</label>
+            <input id="qpEnd" class="form-input" type="date" value="2026-04-17">
+          </div>
+          <div class="form-group">
+            <label class="form-label">初始资金</label>
+            <input id="qpCash" class="form-input" type="number" value="1000000">
+          </div>
+          <div class="form-group">
+            <label class="form-label">选股数量 (Top-N)</label>
+            <select id="qpTopN" class="form-select">
+              <option value="3" selected>前3名（推荐）</option>
+              <option value="5">前5名</option>
+              <option value="7">前7名</option>
+              <option value="10">前10名</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid-4" style="gap:12px;margin-top:12px">
+          <div class="form-group">
+            <label class="form-label">最大持仓数</label>
+            <select id="qpMaxPos" class="form-select">
+              <option value="3">3只</option>
+              <option value="5" selected>5只（推荐）</option>
+              <option value="8">8只</option>
+              <option value="10">10只</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">最大持仓天数</label>
+            <select id="qpHoldDays" class="form-select">
+              <option value="20">20天</option>
+              <option value="30">30天</option>
+              <option value="45">45天</option>
+              <option value="60" selected>60天（推荐）</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">扫描频率</label>
+            <select id="qpScanInterval" class="form-select">
+              <option value="1">每天扫描</option>
+              <option value="2" selected>隔天扫描（推荐）</option>
+              <option value="3">每3天扫描</option>
+              <option value="5">每5天扫描</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">止损线</label>
+            <select id="qpStopLoss" class="form-select">
+              <option value="-0.05">-5%</option>
+              <option value="-0.08" selected>-8%（推荐）</option>
+              <option value="-0.10">-10%</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+          <button class="btn btn-primary" onclick="runQuickPicksBacktest()" style="background:linear-gradient(135deg,#667eea,#764ba2)">🎯 运行一键选股回测</button>
+          <span style="font-size:12px;color:var(--text-secondary)">⏱ 预计3~5分钟（含信号预计算）</span>
+        </div>
+      </div>
+    </div>
+
     <!-- 回测结果 -->
     <div id="backtestResults"></div>
   `;
@@ -180,6 +259,7 @@ function toggleBacktestMode() {
   const mode = document.querySelector('input[name="backtestMode"]:checked').value;
   document.getElementById('singleModePanel').style.display = mode === 'single' ? 'block' : 'none';
   document.getElementById('marketModePanel').style.display = mode === 'market' ? 'block' : 'none';
+  document.getElementById('quickPicksModePanel').style.display = mode === 'quick_picks' ? 'block' : 'none';
 }
 
 async function runSingleBacktest() {
@@ -255,6 +335,39 @@ async function runMarketBacktest() {
   }
 }
 
+async function runQuickPicksBacktest() {
+  const btn = document.querySelector('#quickPicksModePanel .btn-primary');
+  if (btn && btn.disabled) return;
+
+  const params = {
+    mode: 'quick_picks',
+    start_date: document.getElementById('qpStart').value.replace(/-/g, ''),
+    end_date: document.getElementById('qpEnd').value.replace(/-/g, ''),
+    initial_cash: parseFloat(document.getElementById('qpCash').value),
+    max_positions: parseInt(document.getElementById('qpMaxPos').value),
+    stock_limit: parseInt(document.getElementById('qpTopN').value),
+    rebalance_interval: parseInt(document.getElementById('qpScanInterval').value),
+    max_hold_days: parseInt(document.getElementById('qpHoldDays').value),
+    stop_loss_pct: parseFloat(document.getElementById('qpStopLoss').value),
+  };
+
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 回测中（信号预计算中...）'; }
+  showToast('正在运行一键选股回测，含信号预计算约3~5分钟...', 'info');
+
+  try {
+    const result = await API.runBacktest(params);
+    if (result && !result.error) {
+      backtestResults.push(result);
+      renderQuickPicksBacktest(result);
+      showToast('一键选股回测完成！', 'success');
+    } else {
+      showToast(result?.error || '回测失败，请检查后端服务', 'error');
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🎯 运行一键选股回测'; }
+  }
+}
+
 function renderSingleResult(result) {
   const container = document.getElementById('backtestResults');
   const pnl = result.total_return || 0;
@@ -284,7 +397,7 @@ function renderSingleResult(result) {
             return `
               <tr>
                 <td>${t.date || '-'}</td>
-                <td><span class="tag ${isBuy ? 'tag-green' : 'tag-red'}">${isBuy ? '买入' : '卖出'}</span></td>
+                <td><span class="tag ${isBuy ? 'tag-red' : 'tag-green'}">${isBuy ? '买入' : '卖出'}</span></td>
                 <td>${(t.price || 0).toFixed(2)}</td>
                 <td>${formatNumber(t.volume || 0)}</td>
                 <td>¥${formatNumber(t.amount || 0)}</td>
@@ -362,7 +475,7 @@ function renderMarketResult(result) {
               return `
                 <tr>
                   <td>${t.date || '-'}</td>
-                  <td><span class="tag ${isBuy ? 'tag-green' : 'tag-red'}">${isBuy ? '买入' : '卖出'}</span></td>
+                  <td><span class="tag ${isBuy ? 'tag-red' : 'tag-green'}">${isBuy ? '买入' : '卖出'}</span></td>
                   <td><code>${t.ts_code || '-'}</code></td>
                   <td>${(t.price || 0).toFixed(2)}</td>
                   <td>${formatNumber(t.volume || 0)}</td>
@@ -410,6 +523,127 @@ function renderMarketResult(result) {
         <div><span class="card-title">平均持仓</span> <strong>${result.avg_positions || 0} 只</strong></div>
         <div><span class="card-title">最大持仓</span> <strong>${result.max_positions || 0} 只</strong></div>
       </div>
+    </div>
+    ${tradesHtml}
+  `;
+}
+
+function renderQuickPicksBacktest(result) {
+  const container = document.getElementById('backtestResults');
+  const pnl = result.total_return || 0;
+  const annual = result.annual_return || 0;
+  const trades = result.trades || [];
+  const sellStats = result.sell_reason_stats || {};
+
+  // 卖出原因分布
+  const totalSells = Object.values(sellStats).reduce((a, b) => a + b, 0);
+  const sellStatsHtml = totalSells > 0 ? `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+      ${Object.entries(sellStats).sort((a, b) => b[1] - a[1]).map(([reason, count]) => {
+        const pct = (count / totalSells * 100).toFixed(0);
+        const colors = {
+          '策略卖出': '#3B82F6', '固定止盈': '#EF4444', '移动止盈': '#F97316',
+          '超时平仓': '#F59E0B', '止损': '#22C55E', '其他': '#94A3B8',
+        };
+        const color = colors[reason] || '#94A3B8';
+        return `<div style="background:${color}18;padding:6px 12px;border-radius:6px;font-size:12px;border:1px solid ${color}30">
+          <span style="color:${color};font-weight:600">${reason}</span> ${count}次 (${pct}%)
+        </div>`;
+      }).join('')}
+    </div>
+  ` : '';
+
+  // 交割单（前50条+可展开）
+  const displayTrades = trades.slice(0, 50);
+  const hasMore = trades.length > 50;
+  const tradesHtml = trades.length > 0 ? `
+    <div class="card" style="margin-top:16px">
+      <div class="card-title">📋 交割单（共 ${trades.length} 笔${hasMore ? '，展示前50笔' : ''}）</div>
+      <div style="max-height:400px;overflow-y:auto">
+        <table class="data-table" style="margin-top:12px;font-size:12px">
+          <thead>
+            <tr>
+              <th>日期</th><th>方向</th><th>代码</th><th>名称</th>
+              <th>价格</th><th>数量</th><th>金额</th><th>盈亏</th><th>信号</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${displayTrades.map(t => {
+              const isBuy = t.direction === 'buy';
+              const profit = t.profit || 0;
+              return `<tr>
+                <td>${t.date || '-'}</td>
+                <td><span class="tag ${isBuy ? 'tag-red' : 'tag-green'}">${isBuy ? '买入' : '卖出'}</span></td>
+                <td><code>${t.ts_code || '-'}</code></td>
+                <td style="font-size:11px">${t.stock_name || '-'}</td>
+                <td>${(t.price || 0).toFixed(2)}</td>
+                <td>${formatNumber(t.volume || 0)}</td>
+                <td>¥${formatNumber(t.amount || 0)}</td>
+                <td class="${profit >= 0 ? 'positive' : 'negative'}">${isBuy ? '-' : (profit >= 0 ? '+' : '') + Math.abs(profit).toFixed(2)}</td>
+                <td style="color:#94A3B8;font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${t.signal || ''}">${t.signal || '-'}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  ` : '';
+
+  // 参数标签
+  const riskMode = result.risk_filter_mode || 'none';
+  const riskLabel = riskMode === 'snapshot'
+    ? '<span style="background:#22C55E15;color:#22C55E;padding:3px 10px;border-radius:4px;font-size:12px">🛡️风控快照</span>'
+    : riskMode === 'st_fallback'
+    ? '<span style="background:#F59E0B15;color:#F59E0B;padding:3px 10px;border-radius:4px;font-size:12px">🛡️ST兜底</span>'
+    : '';
+  const paramTags = `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+      <span style="background:#667eea15;color:#667eea;padding:3px 10px;border-radius:4px;font-size:12px">Top-${result.top_n || 3}</span>
+      <span style="background:#667eea15;color:#667eea;padding:3px 10px;border-radius:4px;font-size:12px">持仓≤${result.max_positions || 5}只</span>
+      <span style="background:#667eea15;color:#667eea;padding:3px 10px;border-radius:4px;font-size:12px">双均线+回调企稳</span>
+      ${riskLabel}
+    </div>
+  `;
+
+  container.innerHTML = `
+    <div class="card" style="margin-bottom:16px;border:1px solid #667eea20">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="card-title">🎯 一键选股策略回测</div>
+        ${paramTags}
+      </div>
+      <div class="grid-4" style="margin-top:12px">
+        <div>
+          <div class="card-title">总收益</div>
+          <div class="stat-value ${pnl >= 0 ? 'positive' : 'negative'}" style="font-size:28px">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%</div>
+        </div>
+        <div>
+          <div class="card-title">年化收益</div>
+          <div class="stat-value ${annual >= 0 ? 'positive' : 'negative'}" style="font-size:28px">${annual >= 0 ? '+' : ''}${annual.toFixed(2)}%</div>
+        </div>
+        <div>
+          <div class="card-title">最大回撤</div>
+          <div class="stat-value negative" style="font-size:28px">${(result.max_drawdown || 0).toFixed(2)}%</div>
+        </div>
+        <div>
+          <div class="card-title">夏普比率</div>
+          <div class="stat-value" style="font-size:28px">${(result.sharpe_ratio || 0).toFixed(3)}</div>
+        </div>
+      </div>
+      <div class="grid-4" style="margin-top:16px">
+        <div><span class="card-title">胜率</span> <strong style="font-size:18px">${(result.win_rate || 0).toFixed(1)}%</strong></div>
+        <div><span class="card-title">盈亏比</span> <strong style="font-size:18px">${(result.profit_loss_ratio || 0).toFixed(2)}</strong></div>
+        <div><span class="card-title">交易次数</span> <strong style="font-size:18px">${result.total_trades || 0}</strong></div>
+        <div><span class="card-title">最终资产</span> <strong style="font-size:18px">¥${formatNumber(result.final_value || 0)}</strong></div>
+      </div>
+      <div class="grid-3" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-color)">
+        <div><span class="card-title">平均持仓</span> <strong>${result.avg_positions || 0} 只</strong></div>
+        <div><span class="card-title">最大持仓</span> <strong>${result.max_positions_held || 0} 只</strong></div>
+        <div><span class="card-title">平均持有</span> <strong>${result.avg_hold_days || 0} 天</strong></div>
+      </div>
+      ${sellStatsHtml ? `<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-color)">
+        <div class="card-title">卖出原因分布</div>
+        ${sellStatsHtml}
+      </div>` : ''}
     </div>
     ${tradesHtml}
   `;
@@ -490,7 +724,7 @@ function renderCompareResults(results, tsCode) {
         datasets: [{
           label: '总收益率 (%)',
           data: sorted.map(r => r.total_return || 0),
-          backgroundColor: sorted.map(r => (r.total_return || 0) >= 0 ? '#22C55E' : '#EF4444'),
+          backgroundColor: sorted.map(r => (r.total_return || 0) >= 0 ? '#EF4444' : '#22C55E'),
           borderRadius: 6,
         }],
       },

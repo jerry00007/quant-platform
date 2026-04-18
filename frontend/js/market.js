@@ -149,7 +149,7 @@ function renderIndexCards(indices) {
 
     return `
       <div class="card" style="position:relative;overflow:hidden">
-        <div style="position:absolute;top:0;right:0;width:80px;height:80px;background:${isUp ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)'};border-radius:0 0 0 80px"></div>
+        <div style="position:absolute;top:0;right:0;width:80px;height:80px;background:${isUp ? 'rgba(239,68,68,0.08)' : 'rgba(34,197,94,0.08)'};border-radius:0 0 0 80px"></div>
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
           <div>
             <div style="font-size:13px;color:var(--text-secondary);margin-bottom:4px">${name}</div>
@@ -181,7 +181,7 @@ function renderPortfolioCards(positions) {
   const isTotalUp = totalProfit >= 0;
 
   let html = `
-    <div class="card" style="margin-bottom:16px;background:linear-gradient(135deg, ${isTotalUp ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)'}, transparent)">
+    <div class="card" style="margin-bottom:16px;background:linear-gradient(135deg, ${isTotalUp ? 'rgba(239,68,68,0.08)' : 'rgba(34,197,94,0.08)'}, transparent)">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px">
         <div>
           <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">持仓总市值</div>
@@ -318,7 +318,7 @@ function renderTemperature(breadth, sectors) {
   // 温度颜色
   let tempColor, tempLabel, tempEmoji;
   if (temperature >= 70) {
-    tempColor = '#22C55E'; tempLabel = '贪婪'; tempEmoji = '🔥';
+    tempColor = '#EF4444'; tempLabel = '贪婪'; tempEmoji = '🔥';
   } else if (temperature >= 55) {
     tempColor = '#84CC16'; tempLabel = '偏热'; tempEmoji = '☀️';
   } else if (temperature >= 45) {
@@ -326,7 +326,7 @@ function renderTemperature(breadth, sectors) {
   } else if (temperature >= 30) {
     tempColor = '#F97316'; tempLabel = '偏冷'; tempEmoji = '🍂';
   } else {
-    tempColor = '#EF4444'; tempLabel = '恐惧'; tempEmoji = '❄️';
+    tempColor = '#22C55E'; tempLabel = '恐惧'; tempEmoji = '❄️';
   }
 
   // 热门板块
@@ -342,7 +342,7 @@ function renderTemperature(breadth, sectors) {
         <div style="font-size:14px;font-weight:600;color:${tempColor};margin-top:4px">${tempLabel}</div>
 
         <!-- 温度条 -->
-        <div style="margin:16px auto 0;width:80%;height:8px;border-radius:4px;background:linear-gradient(90deg, #EF4444, #F59E0B, #22C55E);position:relative">
+        <div style="margin:16px auto 0;width:80%;height:8px;border-radius:4px;background:linear-gradient(90deg, #22C55E, #F59E0B, #EF4444);position:relative">
           <div style="position:absolute;top:-6px;left:${temperature}%;transform:translateX(-50%);width:16px;height:20px;border-radius:3px;background:${tempColor};border:2px solid var(--color-foreground);transition:left 0.5s ease"></div>
         </div>
         <div style="display:flex;justify-content:space-between;width:80%;margin:4px auto 0;font-size:10px;color:var(--text-muted)">

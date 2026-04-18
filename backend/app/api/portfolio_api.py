@@ -52,22 +52,25 @@ router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
 
 @router.get("/health")
-async def portfolio_health():
-    """检查持仓服务健康状态"""
+async def portfolio_health(db: Session = Depends(get_db)):
+    """检查持仓服务健康状态（SQLite）"""
     try:
-        # 检查NAS连接
-        nas_status = check_nas_connection()
+        # 检查SQLite数据库连接
+        from sqlalchemy import text
+        result = db.execute(text("SELECT COUNT(*) FROM positions WHERE is_active = 1")).scalar()
         
         return {
             "status": "healthy",
-            "nas_connection": nas_status,
+            "db_type": "SQLite",
+            "active_positions": result,
             "message": "Portfolio service is running"
         }
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Portfolio health check failed: {str(e)}"
-        )
+        return {
+            "status": "degraded",
+            "error": str(e),
+            "message": "Portfolio service running but DB check failed"
+        }
 
 
 @router.post("/positions", response_model=Dict[str, Any])

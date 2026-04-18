@@ -2,18 +2,28 @@
 QuantWeave - 每日信号服务
 生成次日操作建议：买入/卖出/止损/止盈
 """
+import json
+import sqlite3
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
+from pathlib import Path
 from loguru import logger
 from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 
-from ...models.models import Stock, StockDaily
+from ...models.models import Stock, StockDaily, Position
 from ..data.data_service import DataService
 from ..strategy.strategy_service import (
     STRATEGY_REGISTRY, SignalType, get_strategy
 )
+
+# 雪球实时行情（可选）
+try:
+    from ..data.xueqiu_data import batch_realtime_quotes
+    _HAS_XUEQIU = True
+except ImportError:
+    _HAS_XUEQIU = False
 
 
 class SignalService:
@@ -219,46 +229,150 @@ class SignalService:
         }
 
     def generate_morning_brief(self, stock_codes: List[str] = None) -> str:
-        """生成早盘提醒文本（用于微信通知）"""
-        result = self.generate_daily_signals(stock_codes=stock_codes)
-        if not result.get("signals"):
-            return "📊 QuantWeave 早盘提醒\n\n今日无操作信号，继续观望。"
+        """生成早盘提醒文本（用于微信通知）
+        
+        信号来源：scan_results 表（一键选股结果），不是旧的 11 策略系统。
+        """
+        today_str = datetime.now().strftime("%Y%m%d")
+        lines = ["📊 QuantWeave 早盘提醒", f"📅 {today_str}", ""]
 
-        lines = ["📊 QuantWeave 早盘提醒", f"📅 {result['date']}", ""]
+        # 我的持仓（头部）
+        self._append_portfolio_section(lines)
 
-        # 买入建议
-        buys = [s for s in result["signals"] if s["action"] == "buy"]
-        if buys:
-            lines.append("🟢 建议买入:")
-            for s in buys[:5]:
-                strategies_str = ",".join(s["strategies"][:3])
-                lines.append(
-                    f"  • {s['name']}({s['ts_code']}) "
-                    f"现价:{s['price']:.2f} "
-                    f"止损:{s['stop_loss']:.2f} "
-                    f"止盈:{s['take_profit']:.2f}"
-                )
-                lines.append(f"    策略: {strategies_str}")
-            lines.append("")
+        # 从 scan_results 表读取最新一键选股结果
+        scan_data = self._get_latest_scan_results()
+        if scan_data:
+            resonance = scan_data.get("resonance", [])
+            strategy_signals = scan_data.get("strategy_signals", {})
 
-        # 卖出建议
-        sells = [s for s in result["signals"] if s["action"] == "sell"]
-        if sells:
-            lines.append("🔴 建议卖出:")
-            for s in sells[:5]:
-                strategies_str = ",".join(s["strategies"][:3])
-                lines.append(
-                    f"  • {s['name']}({s['ts_code']}) "
-                    f"现价:{s['price']:.2f}"
-                )
-                lines.append(f"    策略: {strategies_str}")
-            lines.append("")
+            # 🔴 共振股推荐（Top5，按评分排序）
+            if resonance:
+                # 按评分降序
+                sorted_res = sorted(resonance, key=lambda x: x.get("score", {}).get("total", 0), reverse=True)
+                lines.append(f"🎯 共振股Top{min(len(sorted_res), 5)}:")
+                for s in sorted_res[:5]:
+                    score = s.get("score", {})
+                    total_score = score.get("total", 0)
+                    icon = score.get("icon", "⚪")
+                    advice = score.get("advice", "—")
+                    price = s.get("price", 0)
+                    entry = s.get("entry_points", {})
+                    stop_loss = entry.get("stop_loss", 0)
+                    target = entry.get("target_1", 0)
+                    strategies = ",".join(st.get("strategy", "") for st in s.get("strategies", [])[:3])
+                    risk_level = s.get("risk_level", "safe")
+                    risk_tag = " 🚫" if risk_level in ("block", "blocked") else (" ⚠️" if risk_level == "warning" else "")
 
-        # 统计
-        summary = result["summary"]
-        lines.append(f"📈 总计: 买入{summary['buy']} 卖出{summary['sell']} 观望{summary['hold']}")
+                    lines.append(
+                        f"  {icon} {s.get('name', '')}({s.get('ts_code', '')}) "
+                        f"评分{total_score:.0f}({advice}){risk_tag}"
+                    )
+                    if price:
+                        detail = f"    价:{price:.2f}"
+                        if stop_loss:
+                            detail += f" 止损:{stop_loss:.2f}"
+                        if target:
+                            detail += f" 目标:{target:.2f}"
+                        lines.append(detail)
+                    if strategies:
+                        lines.append(f"    策略: {strategies}")
+                lines.append("")
+
+            # 各策略信号摘要
+            if strategy_signals:
+                lines.append("📋 策略信号:")
+                for key, sigs in strategy_signals.items():
+                    buy_count = sum(1 for s in sigs if s.get("signal", {}).get("signal") == "buy")
+                    lines.append(f"  • {key}: {len(sigs)}只信号, {buy_count}只买入")
+                lines.append("")
+
+            # 统计
+            total_res = len(resonance)
+            total_signals = scan_data.get("total_signals", 0)
+            total_stocks = scan_data.get("total_stocks", 0)
+            scan_time = scan_data.get("scan_time", "")
+            lines.append(
+                f"📈 扫描{total_stocks}只, {total_signals}只信号, "
+                f"{total_res}只共振 | 扫描时间:{scan_time}"
+            )
+        else:
+            lines.append("⚠️ 暂无选股数据，请先执行一键选股。")
 
         return "\n".join(lines)
+
+    def _get_latest_scan_results(self) -> Optional[Dict]:
+        """从 scan_results 表读取最新一键选股结果"""
+        try:
+            db_path = Path(__file__).resolve().parent.parent.parent.parent / "quantweave.db"
+            conn = sqlite3.connect(str(db_path))
+            try:
+                row = conn.execute(
+                    "SELECT result_json FROM scan_results ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                if row and row[0]:
+                    return json.loads(row[0])
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning(f"读取 scan_results 失败: {e}")
+        return None
+
+    def _append_portfolio_section(self, lines: list):
+        """在通知文本中追加持仓板块"""
+        try:
+            positions = (
+                self.db.query(Position)
+                .filter(Position.is_active == True)
+                .all()
+            )
+            if not positions:
+                return
+
+            lines.append("💼 我的持仓:")
+            total_mv = 0.0
+            total_cost = 0.0
+            pos_quotes = {}
+
+            # 获取实时行情
+            if _HAS_XUEQIU:
+                try:
+                    codes = [p.ts_code for p in positions]
+                    pos_quotes = batch_realtime_quotes(codes) or {}
+                except Exception as e:
+                    logger.debug(f"持仓实时行情获取失败: {e}")
+
+            for p in positions:
+                q = pos_quotes.get(p.ts_code, {})
+                cur_price = q.get("current", p.current_price or p.avg_cost)
+                chg_pct = q.get("percent", 0)
+
+                # 盈亏计算
+                if cur_price and p.avg_cost:
+                    pnl_pct = (cur_price - p.avg_cost) / p.avg_cost * 100
+                    pnl_emoji = "🔴" if pnl_pct > 0 else "🟢"
+                    chg_emoji = "🔴" if chg_pct >= 0 else "🟢"
+                    lines.append(
+                        f"  {chg_emoji} {p.name}({p.ts_code}) "
+                        f"{cur_price:.2f} ({chg_pct:+.2f}%) | "
+                        f"成本{p.avg_cost:.2f} {pnl_emoji}持仓{pnl_pct:+.2f}%"
+                    )
+                    total_mv += cur_price * p.volume
+                    total_cost += p.avg_cost * p.volume
+                else:
+                    lines.append(f"  • {p.name}({p.ts_code}) {p.volume}股")
+
+            if total_cost > 0:
+                total_pnl = total_mv - total_cost
+                total_pnl_pct = total_pnl / total_cost * 100
+                pnl_emoji = "🔴" if total_pnl > 0 else "🟢"
+                lines.append(f"  {'─' * 35}")
+                lines.append(
+                    f"  💰 总市值{total_mv / 10000:.2f}万 "
+                    f"{pnl_emoji}总盈亏{total_pnl / 10000:+.2f}万({total_pnl_pct:+.2f}%)"
+                )
+            lines.append("")
+        except Exception as e:
+            logger.debug(f"持仓板块生成失败: {e}")
 
     def _calculate_atr(self, df: pd.DataFrame, period: int = 14) -> float:
         """计算ATR"""

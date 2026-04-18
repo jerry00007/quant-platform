@@ -10,6 +10,7 @@ from ..models.models import BacktestResult
 from ..schemas import BacktestRequest
 from ..services.backtest.backtest_service import BacktestEngine
 from ..services.backtest.market_backtest import MarketBacktestEngine
+from ..services.backtest.quick_picks_backtest import QuickPicksBacktestEngine
 from ..services.data.data_service import DataService
 
 router = APIRouter(prefix="/backtest", tags=["回测管理"])
@@ -78,6 +79,21 @@ def run_backtest(data: BacktestRequest, db: Session = Depends(get_db)):
             start_date=data.start_date,
             end_date=data.end_date,
             stock_limit=data.stock_limit,
+        )
+    elif data.mode == "quick_picks":
+        engine = QuickPicksBacktestEngine(
+            initial_cash=data.initial_cash,
+            max_positions=data.max_positions,
+            top_n=data.stock_limit if data.stock_limit and data.stock_limit <= 20 else 5,
+            commission=data.commission,
+            slippage=data.slippage,
+            scan_interval=data.rebalance_interval,
+            stop_loss=data.stop_loss_pct if data.stop_loss_pct else None,
+            max_hold_days=getattr(data, 'max_hold_days', None),
+        )
+        result = engine.run(
+            start_date=data.start_date,
+            end_date=data.end_date,
         )
     else:
         engine = BacktestEngine(

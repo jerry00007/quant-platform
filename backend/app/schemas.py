@@ -35,7 +35,7 @@ class StrategyStatusUpdate(BaseModel):
 
 class BacktestRequest(BaseModel):
     """执行回测请求"""
-    mode: Optional[str] = Field("single", pattern=r"^(single|market)$", description="回测模式")
+    mode: Optional[str] = Field("single", pattern=r"^(single|market|quick_picks)$", description="回测模式")
     strategy: Optional[str] = Field(None, description="单股票模式的策略类型")
     strategy_type: Optional[str] = Field(None, description="策略类型（备用字段）")
     ts_code: Optional[str] = Field(None, description="单股票模式的股票代码")
@@ -56,6 +56,7 @@ class BacktestRequest(BaseModel):
     commission: Optional[float] = Field(0.0003, ge=0)
     slippage: Optional[float] = Field(0.001, ge=0)
     rebalance_interval: Optional[int] = Field(1, ge=1)
+    max_hold_days: Optional[int] = Field(None, ge=5, le=120, description="一键选股最大持仓天数")
 
 
 # ========== 报告导出 ==========
