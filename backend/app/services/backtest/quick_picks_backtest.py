@@ -51,13 +51,31 @@ ACTIVE_STRATEGIES = {
 UNIVERSAL_STOP_LOSS = -0.08
 MAX_HOLD_DAYS = 60  # 参数优化最优值（原30天 → 60天，收益+15%→+58%）
 
+# === Round 1 新增常量 ===
+# 涨停板过滤阈值（%），>=此值视为涨停无法买入
+LIMIT_UP_THRESHOLD = 9.8
+# 分级滑点：小市值/中等/大市值（按信号日收盘价*持仓估算总市值粗判）
+SMALL_CAP_THRESHOLD = 50_0000_0000  # <50亿用0.3%滑点
+MID_CAP_THRESHOLD = 200_0000_0000   # <200亿用0.2%滑点
+SLIPPAGE_SMALL = 0.003   # 小市值滑点0.3%
+SLIPPAGE_MID   = 0.002   # 中等市值滑点0.2%
+SLIPPAGE_LARGE = 0.001   # 大市值滑点0.1%
+# 印花税（仅卖出，沪市0.1%+深市0.1%，统一按0.1%）
+STAMP_TAX = 0.001
+# 北交所排除
+BJ_EXCLUDE = True  # True=排除北交所股票
+
 
 class QuickPicksBacktestEngine:
     """一键选股策略回测引擎"""
 
     def __init__(self, db_path=None, initial_cash=1_000_000, max_positions=5,
-                 top_n=3, commission=0.0003, slippage=0.001, scan_interval=2,
-                 stop_loss=None, max_hold_days=None):
+                 top_n=3, commission=0.0003, slippage=None, scan_interval=2,
+                 stop_loss=None, max_hold_days=None,
+                 stamp_tax=None, limit_up_threshold=None,
+                 bj_exclude=None, enable_limit_filter=True,
+                 limit_up_days=5,   # 近N日涨停过滤（Round2新增）
+                 ):
         if db_path is None:
             db_path = str(Path(__file__).resolve().parent.parent.parent.parent / "quantweave.db")
         self.db_path = db_path
@@ -65,10 +83,46 @@ class QuickPicksBacktestEngine:
         self.max_positions = max_positions
         self.top_n = top_n
         self.commission = commission
-        self.slippage = slippage
+        self.slippage_default = slippage if slippage is not None else SLIPPAGE_LARGE
         self.scan_interval = scan_interval
         self.stop_loss = stop_loss if stop_loss is not None else UNIVERSAL_STOP_LOSS
         self.max_hold_days = max_hold_days if max_hold_days is not None else MAX_HOLD_DAYS
+        self.stamp_tax = stamp_tax if stamp_tax is not None else STAMP_TAX
+        self.limit_up_threshold = limit_up_threshold if limit_up_threshold is not None else LIMIT_UP_THRESHOLD
+        self.bj_exclude = bj_exclude if bj_exclude is not None else BJ_EXCLUDE
+        self.enable_limit_filter = enable_limit_filter
+        self.limit_up_days = limit_up_days  # 近N日涨停过滤窗口
+        # 实例变量：在run()里由_preload_all_data填充
+        self.limit_up_dates: dict = {}  # {ts_code: set(涨停日期str)}
+
+    def _get_slippage(self, price, shares):
+        """根据持仓市值动态返回滑点"""
+        total_market_value = price * shares
+        if total_market_value < SMALL_CAP_THRESHOLD:
+            return SLIPPAGE_SMALL
+        elif total_market_value < MID_CAP_THRESHOLD:
+            return SLIPPAGE_MID
+        else:
+            return SLIPPAGE_LARGE
+
+    @staticmethod
+    def _is_limit_up(dp_entry, threshold=None):
+        """判断信号日是否涨停（收盘=最高 且 涨幅>=阈值）"""
+        if threshold is None:
+            threshold = LIMIT_UP_THRESHOLD
+        close = dp_entry.get("close", 0)
+        high = dp_entry.get("high", 0)
+        prev_close = dp_entry.get("prev_close", 0)
+        if prev_close <= 0 or high <= 0:
+            return False
+        # 方法1：涨幅判断
+        change_pct = (close - prev_close) / prev_close * 100
+        if change_pct >= threshold:
+            return True
+        # 方法2：收盘=最高（封板）
+        if abs(close - high) < close * 0.001 and change_pct >= 9.5:
+            return True
+        return False
 
     # ================================================================
     # 主入口
@@ -138,16 +192,20 @@ class QuickPicksBacktestEngine:
 
             for tc, reason, pnl in to_close:
                 pos = positions[tc]
-                price = dp[tc]["close"] * (1 - self.slippage)
+                actual_slip = pos.get("actual_slip", self.slippage_default)
+                price = dp[tc]["close"] * (1 - actual_slip)  # 动态滑点
                 amt = pos["shares"] * price
                 comm = amt * self.commission
-                profit = amt - pos["cost"] * pos["shares"] - comm
-                cash += amt - comm
+                # Round 1: 印花税单独计算（卖出时）
+                stamp = amt * self.stamp_tax
+                profit = amt - pos["cost"] * pos["shares"] - comm - stamp
+                cash += amt - comm - stamp
                 trades.append({
                     "date": ds, "direction": "sell", "ts_code": tc,
                     "stock_name": stock_info.get(tc, ""),
                     "price": round(price, 2), "volume": pos["shares"],
                     "amount": round(amt, 2), "commission": round(comm, 2),
+                    "stamp_tax": round(stamp, 2),
                     "profit": round(profit, 2),
                     "signal": f"{reason} ({pnl*100:+.1f}%)",
                 })
@@ -164,27 +222,64 @@ class QuickPicksBacktestEngine:
                     tc = c["ts_code"]
                     if tc not in dp:
                         continue
-                    price = dp[tc]["close"] * (1 + self.slippage)
+
+                    # === Round 1: 北交所排除 ===
+                    if self.bj_exclude and tc.startswith("bj"):
+                        logger.info(f"  [过滤] {tc} 为北交所，排除")
+                        continue
+
+                    # === Round 1: 涨停板过滤 ===
+                    entry_price, entry_date, limit_filtered = None, ds, False
+                    if self.enable_limit_filter:
+                        dp_entry = dp[tc]
+                        if self._is_limit_up(dp_entry, self.limit_up_threshold):
+                            # 涨停 → 跳过，次日开盘买入
+                            # 尝试从下一交易日获取开盘价
+                            next_date = trading_dates[day_i + 1].strftime("%Y%m%d") if day_i + 1 < len(trading_dates) else None
+                            if next_date and next_date in date_price_map and tc in date_price_map[next_date]:
+                                next_dp = date_price_map[next_date][tc]
+                                # 次日若高开超过3%则放弃（追高风险太大）
+                                open_price = next_dp["open"]
+                                change_next = (open_price - dp_entry["close"]) / dp_entry["close"] * 100
+                                if change_next > 3.0:
+                                    logger.info(f"  [涨停跳过] {tc} 次日高开+{change_next:.1f}%，放弃")
+                                    continue
+                                entry_price = open_price * (1 + SLIPPAGE_MID)  # 次日开盘用中等滑点
+                                entry_date = next_date
+                                limit_filtered = True
+                            else:
+                                logger.info(f"  [涨停跳过] {tc} 信号日涨停{ds}，无次日数据，放弃")
+                                continue
+
+                    if entry_price is None:
+                        # 正常情况：收盘价买入 + 分级滑点（先用默认大市值，待确认）
+                        close_p = dp[tc]["close"]
+                        entry_price = close_p * (1 + self.slippage_default)
+
                     budget = cash / max(slots, 1) * 0.95
-                    shares = int(budget / price / 100) * 100
+                    shares = int(budget / entry_price / 100) * 100
                     if shares <= 0:
                         continue
-                    cost = shares * price
+                    cost = shares * entry_price
                     comm = cost * self.commission
                     if cost + comm > cash:
                         continue
                     cash -= cost + comm
+                    # 实际滑点（分级）
+                    actual_slip = self._get_slippage(entry_price, shares)
                     positions[tc] = {
-                        "shares": shares, "cost": price, "entry_day": day_i,
-                        "entry_date": ds, "strategy": c.get("strategy", "dual_ma"),
-                        "peak_price": price, "score": c.get("score", 0),
+                        "shares": shares, "cost": entry_price, "entry_day": day_i,
+                        "entry_date": entry_date, "strategy": c.get("strategy", "dual_ma"),
+                        "peak_price": entry_price, "score": c.get("score", 0),
+                        "limit_filtered": limit_filtered, "actual_slip": actual_slip,
                     }
                     trades.append({
-                        "date": ds, "direction": "buy", "ts_code": tc,
+                        "date": entry_date, "direction": "buy", "ts_code": tc,
                         "stock_name": stock_info.get(tc, ""),
-                        "price": round(price, 2), "volume": shares,
+                        "price": round(entry_price, 2), "volume": shares,
                         "amount": round(cost, 2), "commission": round(comm, 2),
-                        "signal": f"{c.get('strategy_name','')} 评分={c.get('score',0):.0f}",
+                        "signal": f"{c.get('strategy_name','')} 评分={c.get('score',0):.0f}" +
+                                  (" [涨停次日开盘]" if limit_filtered else ""),
                     })
 
             # 更新峰值
@@ -209,17 +304,20 @@ class QuickPicksBacktestEngine:
         fp = date_price_map.get(fds, {})
         for tc, pos in list(positions.items()):
             if tc in fp:
-                price = fp[tc]["close"] * (1 - self.slippage)
+                actual_slip = pos.get("actual_slip", self.slippage_default)
+                price = fp[tc]["close"] * (1 - actual_slip)
                 amt = pos["shares"] * price
                 comm = amt * self.commission
-                profit = amt - pos["cost"] * pos["shares"] - comm
-                cash += amt - comm
+                stamp = amt * self.stamp_tax
+                profit = amt - pos["cost"] * pos["shares"] - comm - stamp
+                cash += amt - comm - stamp
                 pnl = price / pos["cost"] - 1
                 trades.append({
                     "date": fds, "direction": "sell", "ts_code": tc,
                     "stock_name": stock_info.get(tc, ""),
                     "price": round(price, 2), "volume": pos["shares"],
                     "amount": round(amt, 2), "commission": round(comm, 2),
+                    "stamp_tax": round(stamp, 2),
                     "profit": round(profit, 2),
                     "signal": f"回测结束平仓 ({pnl*100:+.1f}%)",
                 })
@@ -254,8 +352,7 @@ class QuickPicksBacktestEngine:
             stocks_df = pd.read_sql("SELECT ts_code, name FROM stocks WHERE is_active = 1", conn)
             stock_info = dict(zip(stocks_df["ts_code"], stocks_df["name"]))
 
-            # 提前120个交易日加载历史数据（策略需要MA60/ZLCMQ75天窗口）
-            # 粗略估算：120交易日 ≈ 6个月 ≈ 180自然日
+            # 提前250个交易日加载历史数据（策略需要MA60窗口 + prev_close计算）
             from datetime import datetime, timedelta
             sd = datetime.strptime(start_date, "%Y%m%d") - timedelta(days=250)
             hist_start = sd.strftime("%Y%m%d")
@@ -269,6 +366,19 @@ class QuickPicksBacktestEngine:
             )
             if all_daily.empty:
                 return {}, stock_info
+
+            # 计算 prev_close（Round1：涨停过滤依赖前收）
+            for tc in all_daily["ts_code"].unique():
+                mask = all_daily["ts_code"] == tc
+                all_daily.loc[mask, "prev_close"] = all_daily.loc[mask, "close"].shift(1)
+
+            # 建立涨停日期索引（Round2：近N日涨停过滤）
+            limit_up_dates = {}
+            for tc, grp in all_daily.groupby("ts_code"):
+                dates = set(grp.loc[grp["change_pct"] >= 9.5, "trade_date"].astype(str).tolist())
+                if dates:
+                    limit_up_dates[tc] = dates
+            self.limit_up_dates = limit_up_dates
 
             stock_data = {}
             for tc, grp in all_daily.groupby("ts_code"):
@@ -358,6 +468,7 @@ class QuickPicksBacktestEngine:
                     "open": float(row["open"]), "high": float(row["high"]),
                     "low": float(row["low"]), "close": float(row["close"]),
                     "vol": float(row["vol"]),
+                    "prev_close": float(row["prev_close"]) if "prev_close" in row and not pd.isna(row["prev_close"]) else float(row["close"]),
                 }
         return date_map
 
@@ -429,6 +540,37 @@ class QuickPicksBacktestEngine:
             elif st_codes and tc in st_codes:
                 # 无快照，ST兜底
                 continue
+
+            # === Round2: 近N日涨停过滤（追高风险）===
+            # 信号日之前N个自然日内有涨停（非信号日本身）→ 检查是否有充分回调
+            if self.limit_up_days > 0:
+                lu_dates = self.limit_up_dates.get(tc, set())
+                if lu_dates and date_str not in lu_dates:  # 信号日涨停由买入阶段处理
+                    from datetime import datetime, timedelta
+                    signal_dt = datetime.strptime(date_str, "%Y%m%d")
+                    window_dates = set()
+                    for delta in range(1, self.limit_up_days + 1):
+                        d = signal_dt - timedelta(days=delta)
+                        window_dates.add(d.strftime("%Y%m%d"))
+                    recent_limit = lu_dates & window_dates
+                    if recent_limit:
+                        # 近N日有涨停 → 检查回调幅度
+                        # 找最近涨停日，计算该日至今的最低点
+                        # 若最低点比涨停价低>=2%，认为有回调，可以买；否则跳过
+                        df_check = stock_data.get(tc)
+                        if df_check is not None:
+                            df_sub = df_check[df_check["trade_date"].astype(str) <= date_str].copy()
+                            if len(df_sub) >= 5:
+                                recent_low = df_sub.tail(self.limit_up_days)["low"].min()
+                                limit_price = None
+                                for _, row in df_sub.iloc[::-1].iterrows():
+                                    pct = row.get("change_pct", 0) or 0
+                                    if pct >= 9.5:
+                                        limit_price = row["close"]
+                                        break
+                                if limit_price and recent_low >= limit_price * 0.98:
+                                    # 无充分回调（最低价距涨停价<2%），排除
+                                    continue
 
             df = stock_data.get(tc)
             if df is None:

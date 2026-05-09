@@ -539,7 +539,7 @@ async function analyzeSignal(ts_code) {
   } else {
     // 最终备用方法
     try {
-      const data = await API.analyzeStock(ts_code);
+      const data = await API.analyzeStockSense(ts_code);
       showToast(`分析完成: ${ts_code} — 建议: ${data.recommendation?.action || '无'}`, 'success');
     } catch (err) {
       showToast(`分析失败: ${err.message}`, 'error');

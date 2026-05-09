@@ -7,5 +7,8 @@ from .screening_api import router as screening_router
 from .portfolio_api import router as portfolio_router
 from .report_api import router as report_router
 from .market_api import router as market_router
+from .market_hot_api import router as market_hot_router
+from .ml_api import router as ml_router
+from .article_api import router as article_router
 
-all_routers = [data_router, strategy_router, backtest_router, risk_router, system_router, screening_router, portfolio_router, report_router, market_router]
+all_routers = [data_router, strategy_router, backtest_router, risk_router, system_router, screening_router, portfolio_router, report_router, market_router, market_hot_router, ml_router, article_router]

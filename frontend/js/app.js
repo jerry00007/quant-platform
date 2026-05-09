@@ -43,10 +43,13 @@ function navigateTo(page) {
     watchlist: renderWatchlist,
     portfolio: renderPortfolio,
     screening: renderScreening,
+    article: renderArticle,
+    'ml-picks': renderMLPicks,
     signals: renderSignals,
     strategy: renderStrategy,
     backtest: renderBacktest,
     market: renderMarket,
+    'market-hot': renderMarketHot,
     risk: renderRisk,
     settings: renderSettings,
   };

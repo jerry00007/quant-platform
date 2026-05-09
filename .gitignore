@@ -55,3 +55,28 @@ __pycache__/
 # AI/Dev tools
 .codebuddy/
 .workbuddy/
+
+# Temporary scripts & data
+backend/backtest_*.json
+backend/backtest_*.txt
+backend/backtest_*.py
+backend/board2_*
+backend/box_breakout_*
+backend/cross100_*
+backend/dragon_leader_*
+backend/intraday_resonance_*
+backend/n_pattern_*
+backend/param_sweep_*
+backend/position_alert_*
+backend/quick_picks_backtest_*
+backend/var20_*
+backend/verify_*.py
+backend/sina_*.csv
+backend/_scan_*.py
+backend/_weekly_*
+backend/tdx_*.txt
+backend/paper_trading_workflow.py
+backend/output/
+
+# Output generated files
+output/

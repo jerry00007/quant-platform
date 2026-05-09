@@ -324,7 +324,13 @@ class NewsService:
         Returns:
             紧急新闻列表
         """
-        urgent_keywords = ["紧急", "突发", "重大", "重要", "警告", "风险", "危机", "冲突", "暴涨", "暴跌"]
+        urgent_keywords = [
+            "紧急", "突发", "重大", "重要", "警告", "风险", "危机", "冲突",
+            "暴涨", "暴跌", "业绩", "大跌", "涨停", "跌停",
+            "Trump", "特朗普", "关税", "谈判", "制裁",
+            "降息", "加息", "美股", "美联储", "护盘", "救市",
+            "减持", "回购", "增持", "ST", "退市", "爆雷"
+        ]
         
         end_time = datetime.now()
         start_time = end_time - timedelta(hours=hours)

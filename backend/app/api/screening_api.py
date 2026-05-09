@@ -9,7 +9,7 @@ from ..core.database import get_db
 from ..core.config import get_settings
 from ..services.data.data_service import DataService
 from ..services.screening.screening_service import ScreeningService
-from ..services.screening.quick_picks_service import QuickPicksService
+from ..services.screening.quick_picks_service import QuickPicksService, get_latest_scan_result
 from ..services.signal.signal_service import SignalService
 
 router = APIRouter(prefix="/screening", tags=["选股与信号"])
@@ -78,22 +78,40 @@ def trigger_quick_picks(
     默认同一天不重复扫描，传 force=true 可强制重扫
     """
     # 检查是否已有今天的扫描结果（非强制模式下跳过）
+    # 🦊 狐探优化：改用 data_date 而非 scan_time 判断缓存
+    # 原因：token 失效时数据停在旧日期，但 scan_time 是今天，
+    #       用户点击"今日已扫描"会看到旧数据的信号，误以为今天有信号
     if not force:
-        from ..services.screening.quick_picks_service import get_latest_scan_result
         from pathlib import Path
         db_path = Path(__file__).resolve().parent.parent.parent.parent / "quantweave.db"
         latest = get_latest_scan_result(db_path)
-        
+
         if latest:
-            from datetime import date
-            scan_date = latest.get("scan_time", "")[:10]
-            today = date.today().isoformat()
-            if scan_date == today:
+            data_date = latest.get("data_date", "")
+            scan_time = latest.get("scan_time", "")
+            result_data = latest.get("result", {})
+
+            data_fresh, data_fresh_msg = QuickPicksService._validate_data_freshness(data_date)
+
+            if data_fresh:
                 return {
                     "status": "already_done",
-                    "message": f"今日已扫描过 (id={latest['id']}, 时间={latest['scan_time']})",
+                    "message": f"数据日期({data_date})为最近交易日，数据新鲜",
                     "latest_id": latest["id"],
-                    "scan_time": latest["scan_time"],
+                    "scan_time": scan_time,
+                    "data_date": data_date,
+                    "data_fresh": True,
+                    "data_fresh_msg": data_fresh_msg or result_data.get("data_freshness_msg", ""),
+                }
+            else:
+                return {
+                    "status": "already_done",
+                    "message": f"数据日期({data_date})不是最近交易日，请强制重新扫描",
+                    "latest_id": latest["id"],
+                    "scan_time": scan_time,
+                    "data_date": data_date,
+                    "data_fresh": False,
+                    "data_fresh_msg": data_fresh_msg or result_data.get("data_freshness_msg", ""),
                 }
 
     # 后台执行扫描
@@ -118,12 +136,15 @@ def get_latest_quick_picks():
     
     if not latest:
         return {"status": "no_data", "message": "暂无扫描结果，请先点击选股"}
-    
+
+    result_data = latest.get("result", {})
     return {
         "status": "ok",
         "scan_time": latest["scan_time"],
         "data_date": latest["data_date"],
-        "result": latest["result"],
+        "data_fresh": result_data.get("data_date_fresh", False),
+        "data_fresh_msg": result_data.get("data_freshness_msg", ""),
+        "result": result_data,
     }
 
 
@@ -137,6 +158,19 @@ def analyze_stock(
     ds = _get_data_service(db)
     service = ScreeningService(db, ds)
     return service.analyze_stock(ts_code, days=days)
+
+
+@router.get("/sense/{ts_code}", summary="StockSense AI 深度分析")
+def stock_sense_analysis(
+    ts_code: str,
+    days: int = Query(250, description="分析天数"),
+    db: Session = Depends(get_db),
+):
+    """StockSense AI 多维度深度分析 — 技术面30% + 基本面25% + 消息面20% + 资金面15%"""
+    from ..services.analysis.stock_sense_service import StockSenseService
+    ds = _get_data_service(db)
+    service = StockSenseService(db, ds)
+    return service.analyze(ts_code, days=days)
 
 
 @router.get("/presets", summary="获取选股预设模板")

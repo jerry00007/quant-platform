@@ -139,6 +139,21 @@ const API = {
     return this.request(`/screening/analyze/${ts_code}?days=${days}`);
   },
 
+  async analyzeStockSense(ts_code, days = 250) {
+    return this.request(`/screening/sense/${ts_code}?days=${days}`, {}, 45000);
+  },
+
+  // ========== 公众号文章 ==========
+  async getArticlePreview() {
+    return this.request('/article/preview');
+  },
+  async generateArticle() {
+    return this.request('/article/generate', { method: 'POST' }, 60000);
+  },
+  async getArticleHistory() {
+    return this.request('/article/history');
+  },
+
   async getScreeningPresets() {
     return this.request('/screening/presets');
   },
@@ -225,6 +240,22 @@ const API = {
   },
   async getMarketSectors(topN = 15) {
     return this.request(`/market/sectors?top_n=${topN}`);
+  },
+
+  // ========== 市场热度 ==========
+  async getLimitList(tradeDate = null) {
+    const query = tradeDate ? `?trade_date=${tradeDate}` : '';
+    return this.request(`/market-hot/limit-list${query}`, {}, 60000);
+  },
+  async getTopList(tradeDate = null) {
+    const query = tradeDate ? `?trade_date=${tradeDate}` : '';
+    return this.request(`/market-hot/top-list${query}`, {}, 60000);
+  },
+  async getMoneyflow(days = 5) {
+    return this.request(`/market-hot/moneyflow?days=${days}`, {}, 60000);
+  },
+  async getMarketSentiment() {
+    return this.request('/market-hot/sentiment', {}, 120000);
   },
 
   // ========== 持仓管理 ==========

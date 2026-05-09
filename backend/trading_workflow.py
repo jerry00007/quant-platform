@@ -267,7 +267,6 @@ def generate_morning_brief(db_path: str = "quantweave.db") -> str:
 
     # 1.2) 重大财经新闻（持仓相关板块优先）
     try:
-        lines.append("📰 今日财经要闻")
         # 获取持仓相关行业
         portfolio_industries = set()
         try:
@@ -284,11 +283,59 @@ def generate_morning_brief(db_path: str = "quantweave.db") -> str:
         except Exception:
             pass
 
-        # 通过 AKShare 获取财经新闻（优先今天，回退昨天）
+        # 通过 Tushare 财联社快讯 + AKShare 财经新闻（财联社最及时，AKShare 兜底）
+        news_lines_urgent = []  # 紧急要闻
+        news_lines_finance = []  # 宏观财经
+        news_lines_industry = [] # 持仓相关行业
+
+        # —— A. 财联社快讯（优先，最实时）——
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+            import tushare as ts
+            token = os.getenv("TUSHARE_TOKEN", "")
+            if token:
+                pro_news = ts.pro_api(token)
+                now = datetime.now()
+                start_dt = (now - timedelta(hours=18)).strftime("%Y-%m-%d %H:%M:%S")
+
+                # 紧急关键词：特朗普谈判、英维克业绩大跌、关税、暴跌暴涨等
+                urgent_kws = ["Trump", "特朗普", "关税", "谈判", "业绩", "大跌", "大跌",
+                              "暴跌", "暴涨", "利空", "利好", "紧急", "突发", "警告",
+                              "制裁", "美股", "美联储", "降息", "加息", "A股", "护盘"]
+                # 持仓相关行业关键词
+                industry_kws = list(portfolio_industries) + [
+                    "存储芯片", "半导体", "芯片", "军工", "科技", "AI", "人工智能",
+                    "新能源", "光伏", "锂电", "电子", "通信", "汽车", "医药", "白酒"]
+
+                try:
+                    df_cls = pro_news.news(src="cls", start_date=start_dt,
+                                            end_date=now.strftime("%Y-%m-%d %H:%M:%S"))
+                    if df_cls is not None and len(df_cls) > 0:
+                        logger.info(f"财联社快讯获取{len(df_cls)}条")
+                        for _, row in df_cls.head(50).iterrows():
+                            title = str(row.get("title", ""))
+                            content = str(row.get("content", ""))[:300]
+                            text = title + " " + content
+                            dt_str = str(row.get("datetime", ""))[:16] if row.get("datetime") else ""
+
+                            is_urgent = any(kw in text for kw in urgent_kws)
+                            is_industry = any(kw in text for kw in industry_kws)
+
+                            if is_urgent:
+                                news_lines_urgent.append(f"  🚨 [{dt_str[-5:]}] {title[:60]}")
+                            elif is_industry:
+                                news_lines_industry.append(f"  ⭐ [{dt_str[-5:]}] {title[:60]}")
+                except Exception as e_urgent:
+                    logger.debug(f"财联社快讯获取失败: {e_urgent}")
+        except Exception:
+            pass
+
+        # —— B. AKShare 财经新闻（兜底，回退最近3天央视稿）——
         try:
             import akshare as ak
             news_df = None
-            for offset_days in range(3):  # 尝试最近3天
+            for offset_days in range(3):
                 d = datetime.now() - timedelta(days=offset_days)
                 try:
                     news_df = ak.news_cctv(date=d.strftime("%Y%m%d"))
@@ -297,39 +344,41 @@ def generate_morning_brief(db_path: str = "quantweave.db") -> str:
                 except Exception:
                     continue
             if news_df is not None and len(news_df) > 0:
-                # 优先筛选持仓相关新闻
-                finance_keywords = ["GDP", "经济", "消费", "投资", "出口", "进口", "制造业",
-                                    "降息", "加息", "利率", "LPR", "降准", "通胀", "CPI", "PPI",
-                                    "贸易", "关税", "制裁", "谈判", "协议", "政策", "改革",
-                                    "股市", "债市", "期货", "原油", "黄金", "美元", "人民币",
-                                    "IPO", "注册制", "退市", "回购", "增持", "减持"]
-                industry_keywords = list(portfolio_industries) + ["存储芯片", "半导体", "芯片",
-                                    "科技", "AI", "人工智能", "新能源", "光伏", "锂电", "军工"]
-                all_keywords = finance_keywords + industry_keywords
-                related_news = []
-                other_news = []
+                finance_kws = ["GDP", "经济", "消费", "投资", "出口", "进口", "制造业",
+                               "降息", "加息", "利率", "LPR", "降准", "通胀", "CPI", "PPI",
+                               "贸易", "关税", "制裁", "谈判", "协议", "政策", "改革",
+                               "股市", "债市", "期货", "原油", "黄金", "美元", "人民币",
+                               "IPO", "注册制", "退市", "回购", "增持", "减持"]
+                # 财联社已有内容就不再重复显示
+                cls_titles_lower = [t.lower() for t in news_lines_urgent] if news_lines_urgent else []
                 for _, row in news_df.head(15).iterrows():
                     title = str(row.get("title", ""))
+                    if any(t.lower()[:20] in title.lower() for t in news_lines_urgent if t):
+                        continue  # 去重
                     content = str(row.get("content", ""))[:200]
-                    is_industry = any(kw in title or kw in content for kw in industry_keywords)
-                    is_finance = any(kw in title or kw in content for kw in finance_keywords)
-                    if is_industry:
-                        related_news.append(f"  ⭐ {title}")
-                    elif is_finance:
-                        related_news.append(f"  🔔 {title}")
-                    else:
-                        other_news.append(f"  • {title}")
-
-                if related_news:
-                    lines.append("  【持仓相关】")
-                    lines.extend(related_news[:5])
-                if other_news:
-                    lines.append("  【其他要闻】")
-                    lines.extend(other_news[:3])
-            else:
-                lines.append("  (今日暂无新闻数据)")
+                    is_finance = any(kw in title or kw in content for kw in finance_kws)
+                    if is_finance:
+                        news_lines_finance.append(f"  🔔 {title[:60]}")
         except ImportError:
-            lines.append("  (AKShare未安装，跳过新闻)")
+            pass
+        except Exception:
+            pass
+
+        # —— C. 组装新闻模块输出（优先输出紧急要闻）——
+        if news_lines_urgent or news_lines_finance or news_lines_industry:
+            lines.append("📰 今日财经要闻")
+            if news_lines_urgent:
+                lines.append("  【🚨 紧急/重大】")
+                lines.extend(news_lines_urgent[:5])
+            if news_lines_industry:
+                lines.append("  【⭐ 持仓相关行业】")
+                lines.extend(news_lines_industry[:4])
+            if news_lines_finance:
+                lines.append("  【🔔 宏观财经】")
+                lines.extend(news_lines_finance[:4])
+        else:
+            lines.append("📰 今日财经要闻")
+            lines.append("  (今日暂无新闻数据)")
         lines.append("")
     except Exception as e:
         logger.debug(f"新闻获取失败: {e}")
@@ -422,63 +471,119 @@ def generate_morning_brief(db_path: str = "quantweave.db") -> str:
             lines.append("  ✅ 成交额充足，市场活跃")
         lines.append("")
 
-    # 5) 跟踪池提醒（用实时价格）
+    # 5) 今日共振精选 Top10（从 scan_results 读，系统真正选出的股）
     try:
-        pool_svc = TrackingPoolService(db_path)
-        tracking = pool_svc.get_tracking_pool("tracking")
+        # 读取最新的共振选股结果
+        scan_row = conn.execute(
+            "SELECT result_json, scan_time, resonance_count FROM scan_results "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
 
-        # 尝试获取跟踪池股票实时行情
-        tracking_quotes = {}
-        if _HAS_XUEQIU and tracking:
+        resonance_quotes = {}
+        resonance_list = []
+        if scan_row:
+            scan_json = json.loads(scan_row[0])
+            resonance_list_raw = scan_json.get("resonance", [])
+            # 按 score.total 排序，取 Top10
+            resonance_list_raw.sort(key=lambda x: x.get("score", {}).get("total", 0), reverse=True)
+            resonance_list = resonance_list_raw[:10]
+            scan_time = scan_row[1]
+            res_count = scan_row[2]
+        else:
+            scan_time = "未扫描"
+            res_count = 0
+
+        # 获取实时行情（如果雪球可用）
+        if _HAS_XUEQIU and resonance_list:
             try:
-                codes = [t["ts_code"] for t in tracking]
-                tracking_quotes = batch_realtime_quotes(codes)
+                codes = [s["ts_code"] for s in resonance_list]
+                resonance_quotes = batch_realtime_quotes(codes)
             except Exception:
                 pass
 
-        # 卖出检测也用实时价格
+        # 也从 tracking_pool 读需要卖出的信号（不丢弃原有风控）
+        pool_svc = TrackingPoolService(db_path)
         sell_signals = pool_svc.detect_sell_signals(latest_date, use_realtime=True)
 
-        lines.append(f"📋 跟踪池: {len(tracking)}只在跟踪")
+        lines.append(f"🌟 今日共振精选 ({scan_time} | 共{res_count}只共振)")
+        if resonance_list:
+            for i, s in enumerate(resonance_list, 1):
+                tc = s.get("ts_code", "")
+                name = s.get("name", get_stock_name(tc, conn))
+                score_total = s.get("score", {}).get("total", 0)
+                strategies_raw = s.get("strategies", [])
+                # strategies 可能是 [{'name': 'dual_ma'}, ...] 或 ['dual_ma', ...]
+                strategy_names = []
+                for st in strategies_raw:
+                    if isinstance(st, dict):
+                        strategy_names.append(st.get("name", ""))
+                    else:
+                        strategy_names.append(str(st))
+                strategy_str = ",".join(strategy_names[:2]) or "双策略共振"
+
+                q = resonance_quotes.get(tc, {})
+                cur_price = q.get("current", 0)
+                chg = q.get("percent", 0)
+
+                # 评分标签
+                if score_total >= 70:
+                    star = "🔥"
+                elif score_total >= 60:
+                    star = "⭐"
+                else:
+                    star = "○"
+
+                if cur_price > 0:
+                    arrow = "🔴" if chg > 0 else "🟢" if chg < 0 else "⚪"
+                    lines.append(
+                        f"  {i:02d}. {star} {name}({tc}) "
+                        f"{cur_price:.2f}({arrow}{chg:+.1f}%) "
+                        f"评分{score_total:.0f} [{strategy_str}]"
+                    )
+                else:
+                    lines.append(
+                        f"  {i:02d}. {star} {name}({tc}) "
+                        f"评分{score_total:.0f} [{strategy_str}]"
+                    )
+        else:
+            lines.append("  (今日暂无共振选股结果，请先运行 --scan-only)")
+
+        # 卖出信号（来自跟踪池风控）
         if sell_signals:
-            lines.append(f"  🔴 {len(sell_signals)}只需卖出！")
+            lines.append("")
+            lines.append(f"  🔴 ⚠️ {len(sell_signals)}只持仓股触发卖出信号！")
             for s in sell_signals[:5]:
                 lines.append(f"     {s['stock_name']}({s['ts_code']}) {s['sell_reason']}")
-
-        # 显示实时行情（top 10，去重）
-        if tracking_quotes:
-            lines.append("")
-            lines.append("📡 跟踪池实时行情:")
-            shown_codes = set()
-            for t in tracking:
-                tc = t["ts_code"]
-                if tc in shown_codes:
-                    continue
-                shown_codes.add(tc)
-                if tc in tracking_quotes:
-                    q = tracking_quotes[tc]
-                    chg = q.get("percent", 0)
-                    arrow = "🔴" if chg > 0 else "🟢" if chg < 0 else "⚪"
-                    pnl = t.get("current_pnl_pct", 0)
-                    lines.append(f"  {arrow} {t['stock_name']}({tc}) {q['current']:.2f} ({chg:+.2f}%) 持仓{pnl:+.2f}%")
-                if len(shown_codes) >= 10:
-                    break
         lines.append("")
     except Exception as e:
-        logger.warning(f"跟踪池提醒生成失败: {e}")
+        logger.warning(f"共振精选展示失败: {e}")
 
-    # 6) 今日策略建议
+    # 6) 今日策略建议（基于共振股数量 + 卖出信号）
+    pool_svc_final = TrackingPoolService(db_path)
+    sell_signals_final = pool_svc_final.detect_sell_signals(latest_date, use_realtime=False)
+    pos_rows_final = conn.execute(
+        "SELECT COUNT(*) FROM positions WHERE is_active = 1"
+    ).fetchone()[0] or 0
+
     lines.append("🎯 今日操作建议:")
     if total_yi and total_yi < 6000:
         lines.append("  • 成交额偏低，低吸为主，不追高")
-    elif sell_signals and len(sell_signals) >= 3:
-        lines.append("  • 多只跟踪股需卖出，先处理持仓")
-    elif tracking and len(tracking) < 5:
-        lines.append("  • 跟踪池未满，关注今日选股信号")
-        lines.append("  • 可从新出信号的票中选入跟踪池")
+    if sell_signals_final and len(sell_signals_final) >= 2:
+        lines.append("  • ⚠️ 多只持仓股触发卖出信号，优先处理持仓")
+    if resonance_list and len(resonance_list) > 0:
+        top_score = resonance_list[0].get("score", {}).get("total", 0)
+        if top_score >= 75:
+            lines.append(f"  • 首选共振股评分{top_score:.0f}，可重点关注")
+        elif top_score >= 65:
+            lines.append(f"  • 共振股评分一般({top_score:.0f})，控制仓位谨慎操作")
+        else:
+            lines.append("  • 今日共振股评分偏低，以持仓管理为主")
     else:
-        lines.append("  • 跟踪池已满，以持仓管理为主")
-        lines.append("  • 关注卖出信号，及时止盈止损")
+        lines.append("  • 今日暂无共振选股结果，建议先运行 --scan-only")
+    if pos_rows_final >= 5:
+        lines.append(f"  • 持仓{pos_rows_final}只，仓位较重，不新增")
+    elif pos_rows_final < 3 and resonance_list:
+        lines.append("  • 仓位轻，可从共振精选中择机建仓")
 
     lines.append("")
     lines.append("⚠️ 以上为量化信号参考，不构成投资建议")

@@ -3,17 +3,21 @@
  */
 
 const STRATEGY_TYPES = [
-  { key: 'dual_ma', name: '双均线交叉', type: '趋势', desc: '短均线上穿长均线买入，下穿卖出' },
-  { key: 'bollinger', name: '布林带突破', type: '均值回归', desc: '价格突破上/下轨产生信号' },
-  { key: 'rsi', name: 'RSI超买超卖', type: '均值回归', desc: 'RSI<25买入，RSI>80卖出（优化参数）' },
-  { key: 'macd', name: 'MACD金叉死叉', type: '趋势', desc: 'DIF上穿DEA买入，下穿卖出' },
-  { key: 'chip', name: '主力筹码趋向', type: '筹码', desc: '基于通达信ZLCMQ指标' },
-  { key: 'enhanced_chip', name: '增强筹码策略', type: '筹码', desc: 'ZLCMQ+多因子+ATR动态风控' },
-  { key: 'pullback_stable', name: '强势股回调企稳', type: '选股', desc: '5选3企稳条件+大盘过滤' },
-  { key: 'vol_breakout', name: '爆量突破(锋芒)', type: '动量', desc: '低位横盘后爆量突破20日高点' },
-  { key: 'first_yin', name: '龙头首阴反抽(锋芒)', type: '短线', desc: '连续涨停后首阴次日低吸博弈反抽' },
-  { key: 'trend_ma', name: '均线趋势跟踪(锋芒)', type: '趋势', desc: '三阶段均线系统，多头排列起势' },
-  { key: 'top_bottom', name: '顶底图策略', type: '顶底识别', desc: '通达信顶底图指标，识别超买超卖区域' },
+  // ===== 实盘策略 =====
+  { key: 'resonance', name: '共振精选', type: '复合选股', desc: '双均线+回调企稳双策略共振，一键选股Top3，2年回测+58.5%', is_live: true, badge: '实盘' },
+  { key: 'ultra_short', name: '超短线三模式', type: '超短线', desc: 'Mode1隔夜T / Mode2低吸 / Mode3强势回调，8分评分制，最长持有2天', is_live: true, badge: '实盘' },
+  // ===== 研究策略 =====
+  { key: 'dual_ma', name: '双均线交叉', type: '趋势', desc: '短均线上穿长均线买入，下穿卖出', is_live: false },
+  { key: 'bollinger', name: '布林带突破', type: '均值回归', desc: '价格突破上/下轨产生信号', is_live: false },
+  { key: 'rsi', name: 'RSI超买超卖', type: '均值回归', desc: 'RSI<25买入，RSI>80卖出（优化参数）', is_live: false },
+  { key: 'macd', name: 'MACD金叉死叉', type: '趋势', desc: 'DIF上穿DEA买入，下穿卖出', is_live: false },
+  { key: 'chip', name: '主力筹码趋向', type: '筹码', desc: '基于通达信ZLCMQ指标', is_live: false },
+  { key: 'enhanced_chip', name: '增强筹码策略', type: '筹码', desc: 'ZLCMQ+多因子+ATR动态风控', is_live: false },
+  { key: 'pullback_stable', name: '强势股回调企稳', type: '选股', desc: '5选3企稳条件+大盘过滤', is_live: false },
+  { key: 'vol_breakout', name: '爆量突破(锋芒)', type: '动量', desc: '低位横盘后爆量突破20日高点', is_live: false },
+  { key: 'first_yin', name: '龙头首阴反抽(锋芒)', type: '短线', desc: '连续涨停后首阴次日低吸博弈反抽', is_live: false },
+  { key: 'trend_ma', name: '均线趋势跟踪(锋芒)', type: '趋势', desc: '三阶段均线系统，多头排列起势', is_live: false },
+  { key: 'top_bottom', name: '顶底图策略', type: '顶底识别', desc: '通达信顶底图指标，识别超买超卖区域', is_live: false },
 ];
 
 function renderStrategy() {
@@ -34,28 +38,65 @@ function renderStrategy() {
 
 function renderStrategyList() {
   const container = document.getElementById('strategyList');
+  const liveStrategies = STRATEGY_TYPES.filter(s => s.is_live);
+  const researchStrategies = STRATEGY_TYPES.filter(s => !s.is_live);
+
   container.innerHTML = `
-    <div class="grid-2" style="gap:16px">
-      ${STRATEGY_TYPES.map(s => `
-        <div class="card" style="cursor:pointer" onclick="showStrategyDetail('${s.key}')">
-          <div style="display:flex;justify-content:space-between;align-items:start">
-            <div>
-              <h3 style="font-size:16px;font-weight:700;margin-bottom:4px">${s.name}</h3>
-              <span class="tag tag-blue" style="margin-bottom:8px">${s.type}</span>
-              <p style="color:var(--text-secondary);font-size:13px;margin-top:8px">${s.desc}</p>
+    ${liveStrategies.length > 0 ? `
+      <div style="margin-bottom:24px">
+        <h3 style="font-size:14px;font-weight:600;color:var(--text-secondary);margin-bottom:12px;text-transform:uppercase;letter-spacing:1px">
+          🟢 实盘策略
+        </h3>
+        <div class="grid-2" style="gap:16px">
+          ${liveStrategies.map(s => `
+            <div class="card" style="cursor:pointer;border-left:3px solid #059669" onclick="showStrategyDetail('${s.key}')">
+              <div style="display:flex;justify-content:space-between;align-items:start">
+                <div>
+                  <h3 style="font-size:16px;font-weight:700;margin-bottom:4px">${s.name}</h3>
+                  <span class="tag tag-blue" style="margin-bottom:8px">${s.type}</span>
+                  <p style="color:var(--text-secondary);font-size:13px;margin-top:8px">${s.desc}</p>
+                </div>
+                <span class="tag" style="background:#ECFDF5;color:#059669;font-weight:600">${s.badge || '实盘'}</span>
+              </div>
+              <div style="margin-top:12px;display:flex;gap:8px">
+                <button class="btn btn-sm btn-outline" onclick="event.stopPropagation();quickBacktest('${s.key}')">
+                  🔬 快速回测
+                </button>
+                <button class="btn btn-sm btn-outline" onclick="event.stopPropagation();showParams('${s.key}')">
+                  📋 参数
+                </button>
+              </div>
             </div>
-            <span class="tag tag-green">可用</span>
-          </div>
-          <div style="margin-top:12px;display:flex;gap:8px">
-            <button class="btn btn-sm btn-outline" onclick="event.stopPropagation();quickBacktest('${s.key}')">
-              🔬 快速回测
-            </button>
-            <button class="btn btn-sm btn-outline" onclick="event.stopPropagation();showParams('${s.key}')">
-              📋 参数
-            </button>
-          </div>
+          `).join('')}
         </div>
-      `).join('')}
+      </div>
+    ` : ''}
+    <div>
+      <h3 style="font-size:14px;font-weight:600;color:var(--text-secondary);margin-bottom:12px;text-transform:uppercase;letter-spacing:1px">
+        🔬 研究策略
+      </h3>
+      <div class="grid-2" style="gap:16px">
+        ${researchStrategies.map(s => `
+          <div class="card" style="cursor:pointer" onclick="showStrategyDetail('${s.key}')">
+            <div style="display:flex;justify-content:space-between;align-items:start">
+              <div>
+                <h3 style="font-size:16px;font-weight:700;margin-bottom:4px">${s.name}</h3>
+                <span class="tag tag-blue" style="margin-bottom:8px">${s.type}</span>
+                <p style="color:var(--text-secondary);font-size:13px;margin-top:8px">${s.desc}</p>
+              </div>
+              <span class="tag tag-green">可用</span>
+            </div>
+            <div style="margin-top:12px;display:flex;gap:8px">
+              <button class="btn btn-sm btn-outline" onclick="event.stopPropagation();quickBacktest('${s.key}')">
+                🔬 快速回测
+              </button>
+              <button class="btn btn-sm btn-outline" onclick="event.stopPropagation();showParams('${s.key}')">
+                📋 参数
+              </button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
     </div>
   `;
 }

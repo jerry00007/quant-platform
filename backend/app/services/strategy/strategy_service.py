@@ -278,6 +278,18 @@ from .fengmang_strategy import VolumeBreakoutStrategy, DragonFirstYinStrategy, T
 from .top_bottom_strategy import TopBottomStrategy
 
 STRATEGY_REGISTRY = {
+    # 实盘策略
+    "resonance": type("ResonanceStrategy", (StrategyBase,), {
+        "name": "共振精选",
+        "description": "双均线+回调企稳双策略共振，一键选股Top3，2年回测+58.5%",
+        "params": {"top_n": 3, "max_positions": 5, "max_hold_days": 60, "stop_loss": -0.08},
+    }),
+    "ultra_short": type("UltraShortStrategy", (StrategyBase,), {
+        "name": "超短线三模式",
+        "description": "Mode1隔夜T / Mode2低吸 / Mode3强势回调，8分评分制，最长持有2天",
+        "params": {"max_positions": 3, "max_position_pct": 0.12, "stop_loss": -0.05, "max_hold_days": 2},
+    }),
+    # 研究策略
     "dual_ma": DualMAStrategy,
     "bollinger": BollingerBreakStrategy,
     "rsi": RSIStrategy,
