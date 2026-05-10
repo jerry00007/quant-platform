@@ -1,0 +1,169 @@
+{
+    "_meta": {
+        "version": "1.0",
+        "description": "QuantWeave 策略沙盒预设注册表 — 用户说简称即可触发对应回测",
+        "available_strategy_keys": ["dual_ma", "pullback_stable", "bollinger_upper", "enhanced_chip", "trend_ma", "limit_up_shakeout", "high_tight_flag"],
+        "scoring_dimensions": ["tech", "base", "sentiment", "fund"]
+    },
+
+    "resonance-v1": {
+        "name": "共振策略v1（原版2策略）",
+        "short_names": ["共振策略", "共振", "resonance", "2策略"],
+        "strategies": ["dual_ma", "pullback_stable"],
+        "scoring_weights": {"tech": 0.30, "base": 0.25, "sentiment": 0.20, "fund": 0.15},
+        "backtest_params": {
+            "max_positions": 5,
+            "top_n": 3,
+            "scan_interval": 2,
+            "stop_loss": -0.08,
+            "max_hold_days": 60
+        },
+        "is_verified": true,
+        "description": "原始双均线+回调企稳共振，2年回测+41.63%/夏普0.978，已验证"
+    },
+
+    "resonance-v2": {
+        "name": "共振策略v2（5策略全景）",
+        "short_names": ["5策略", "五策略", "全策略", "全景"],
+        "strategies": ["dual_ma", "pullback_stable", "bollinger_upper", "enhanced_chip", "trend_ma"],
+        "scoring_weights": {"tech": 0.35, "base": 0.25, "sentiment": 0.20, "fund": 0.20},
+        "backtest_params": {
+            "max_positions": 5,
+            "top_n": 3,
+            "scan_interval": 2,
+            "stop_loss": -0.08,
+            "max_hold_days": 60
+        },
+        "is_verified": false,
+        "description": "全部5策略+新评分体系，2年回测+3.60%/夏普0.224，信号过多稀释质量"
+    },
+
+    "resonance-v3": {
+        "name": "共振策略v3（3精选+新评分）",
+        "short_names": ["3策略", "三策略", "精选"],
+        "strategies": ["dual_ma", "pullback_stable", "enhanced_chip"],
+        "scoring_weights": {"tech": 0.35, "base": 0.25, "sentiment": 0.20, "fund": 0.20},
+        "backtest_params": {
+            "max_positions": 5,
+            "top_n": 3,
+            "scan_interval": 2,
+            "stop_loss": -0.08,
+            "max_hold_days": 60
+        },
+        "is_verified": false,
+        "description": "双均线+回调企稳+增强筹码3个高质量策略，用新评分体系（OBV/动量情绪）"
+    },
+
+    "dual-ma-only": {
+        "name": "双均线单策略",
+        "short_names": ["双均线", "ma"],
+        "strategies": ["dual_ma"],
+        "scoring_weights": {"tech": 0.40, "base": 0.25, "sentiment": 0.15, "fund": 0.20},
+        "backtest_params": {
+            "max_positions": 3,
+            "top_n": 2,
+            "scan_interval": 2,
+            "stop_loss": -0.08,
+            "max_hold_days": 60
+        },
+        "is_verified": true,
+        "description": "单均线策略，2年回测+101.44%/夏普1.240，最强单策略"
+    },
+
+    "pullback-only": {
+        "name": "回调企稳单策略",
+        "short_names": ["回调企稳", "回调", "pullback"],
+        "strategies": ["pullback_stable"],
+        "scoring_weights": {"tech": 0.40, "base": 0.25, "sentiment": 0.15, "fund": 0.20},
+        "backtest_params": {
+            "max_positions": 3,
+            "top_n": 2,
+            "scan_interval": 2,
+            "stop_loss": -0.08,
+            "max_hold_days": 60
+        },
+        "is_verified": true,
+        "description": "强势股回调企稳，2年回测+82.07%/夏普1.459，次强单策略"
+    },
+
+    "ml-basic": {
+        "name": "ML策略（基础版）",
+        "short_names": ["ml", "ML", "ML策略", "ml策略", "机器学习"],
+        "strategies": ["dual_ma", "pullback_stable"],
+        "scoring_weights": {"tech": 0.40, "base": 0.20, "sentiment": 0.15, "fund": 0.25},
+        "backtest_params": {
+            "max_positions": 5,
+            "top_n": 3,
+            "scan_interval": 2,
+            "stop_loss": -0.08,
+            "max_hold_days": 60
+        },
+        "is_verified": false,
+        "use_ml_timing": false,
+        "description": "共振v1基础 + ML择时占位（暂未实现ML择时）"
+    },
+
+    "limit-up-shakeout": {
+        "name": "涨停洗盘",
+        "short_names": ["涨停洗盘", "洗盘", "涨停", "shakeout"],
+        "strategies": ["limit_up_shakeout"],
+        "scoring_weights": {"tech": 0.40, "base": 0.20, "sentiment": 0.15, "fund": 0.25},
+        "backtest_params": {
+            "max_positions": 3,
+            "top_n": 2,
+            "scan_interval": 2,
+            "stop_loss": -0.05,
+            "max_hold_days": 7
+        },
+        "is_verified": false,
+        "description": "涨停后次日放量阴线不破昨收，主力洗盘短线机会，来源Sequoia-X"
+    },
+
+    "high-tight-flag": {
+        "name": "高窄旗形",
+        "short_names": ["高窄旗形", "旗形", "flag", "高旗"],
+        "strategies": ["high_tight_flag"],
+        "scoring_weights": {"tech": 0.40, "base": 0.20, "sentiment": 0.15, "fund": 0.25},
+        "backtest_params": {
+            "max_positions": 3,
+            "top_n": 2,
+            "scan_interval": 2,
+            "stop_loss": -0.08,
+            "max_hold_days": 15
+        },
+        "is_verified": false,
+        "description": "暴涨60%后窄幅整理+缩量，弹簧压缩等待释放，来源Sequoia-X"
+    },
+
+    "new-morphology": {
+        "name": "新形态组合（涨停洗盘+高窄旗形）",
+        "short_names": ["新形态", "形态组合", "形态策略"],
+        "strategies": ["limit_up_shakeout", "high_tight_flag"],
+        "scoring_weights": {"tech": 0.40, "base": 0.20, "sentiment": 0.15, "fund": 0.25},
+        "backtest_params": {
+            "max_positions": 3,
+            "top_n": 2,
+            "scan_interval": 2,
+            "stop_loss": -0.08,
+            "max_hold_days": 15
+        },
+        "is_verified": false,
+        "description": "涨停洗盘+高窄旗形双形态策略，用沙盒验证"
+    },
+
+    "resonance-morph": {
+        "name": "共振增强（v1+新形态）",
+        "short_names": ["共振增强", "增强共振", "v1形态"],
+        "strategies": ["dual_ma", "pullback_stable", "limit_up_shakeout", "high_tight_flag"],
+        "scoring_weights": {"tech": 0.35, "base": 0.25, "sentiment": 0.20, "fund": 0.20},
+        "backtest_params": {
+            "max_positions": 5,
+            "top_n": 3,
+            "scan_interval": 2,
+            "stop_loss": -0.08,
+            "max_hold_days": 30
+        },
+        "is_verified": false,
+        "description": "原版2策略+2个新形态策略，用新评分体系验证是否能提升v1"
+    }
+}

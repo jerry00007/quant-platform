@@ -464,6 +464,172 @@ def signals_trend_ma(
 
 
 # ============================================================
+# 策略6: 涨停洗盘（Limit Up Shakeout）
+# ============================================================
+
+def signals_limit_up_shakeout(
+    close: np.ndarray,
+    high: np.ndarray,
+    low: np.ndarray,
+    vol: np.ndarray,
+    open_: np.ndarray,
+    dates: List[str],
+    params: Optional[dict] = None,
+) -> SignalResult:
+    """涨停洗盘策略（Limit Up Shakeout）
+
+    逻辑：主力拉涨停后次日洗盘，放量不破昨收 = 筹码稳固，短线机会。
+
+    买入条件（全部满足）:
+      1. 昨日涨停：prev_close >= prev2_close × (1 + limit_up_pct)
+      2. 今日收阴：today_close < today_open
+      3. 今日放量：today_vol >= prev_vol × vol_surge_mult
+      4. 不破昨收：today_low >= prev_close × (1 - max_break_pct)
+
+    卖出: 跌破买入价 stop_loss_pct（exit_config 处理止盈）
+
+    Params:
+        limit_up_pct: 涨停判定阈值 (default 0.095)
+        vol_surge_mult: 放量倍数 (default 2.0)
+        max_break_pct: 最大跌破昨收比例 (default 0.02)
+        hold_days: 最大持仓天数 (default 7)
+        stop_loss_pct: 止损比例 (default 0.05)
+    """
+    p = params or {}
+    limit_up_pct = p.get('limit_up_pct', 0.095)
+    vol_surge_mult = p.get('vol_surge_mult', 2.0)
+    max_break_pct = p.get('max_break_pct', 0.02)
+    hold_days = p.get('hold_days', 7)
+    stop_loss_pct = p.get('stop_loss_pct', 0.05)
+
+    signals = {}
+    buy_info = {}  # date_idx -> buy_price
+
+    for i in range(2, len(close)):
+        if np.isnan(close[i]) or np.isnan(close[i - 1]) or np.isnan(close[i - 2]):
+            continue
+        if np.isnan(open_[i]) or np.isnan(low[i]) or np.isnan(vol[i]):
+            continue
+        if np.isnan(vol[i - 1]):
+            continue
+
+        # 1. 昨日涨停
+        if close[i - 1] < close[i - 2] * (1 + limit_up_pct):
+            continue
+        # 2. 今日收阴
+        if close[i] >= open_[i]:
+            continue
+        # 3. 今日放量
+        if vol[i - 1] <= 0:
+            continue
+        if vol[i] < vol[i - 1] * vol_surge_mult:
+            continue
+        # 4. 不破昨收
+        if low[i] < close[i - 1] * (1 - max_break_pct):
+            continue
+
+        signals[dates[i]] = 'buy'
+        buy_info[i] = close[i]
+
+    # 卖出信号：止损检测
+    for buy_idx, buy_price in buy_info.items():
+        for i in range(buy_idx + 1, min(buy_idx + hold_days + 1, len(close))):
+            if np.isnan(close[i]):
+                continue
+            if close[i] < buy_price * (1 - stop_loss_pct):
+                signals[dates[i]] = 'sell'
+                break
+
+    return signals
+
+
+# ============================================================
+# 策略7: 高窄旗形（High Tight Flag）
+# ============================================================
+
+def signals_high_tight_flag(
+    close: np.ndarray,
+    high: np.ndarray,
+    low: np.ndarray,
+    vol: np.ndarray,
+    open_: np.ndarray,
+    dates: List[str],
+    params: Optional[dict] = None,
+) -> SignalResult:
+    """高窄旗形策略（High Tight Flag）
+
+    逻辑：暴涨后窄幅整理+缩量 = 弹簧压缩等待释放。
+
+    买入条件（全部满足）:
+      1. 强动量：momentum_period内 max(high)/min(low) > 1 + momentum_pct
+      2. 极度收敛：flag_period内 max(high)/min(low) < 1 + flag_pct
+      3. 高位抗跌：flag_period内 min(low) >= momentum_period max(high) × support_pct
+      4. 缩量：今日量 < vol_period均量 × vol_shrink_pct
+
+    Params:
+        momentum_period: 动量计算周期 (default 40)
+        momentum_pct: 动量涨幅阈值 (default 0.60, 即60%)
+        flag_period: 旗形收敛周期 (default 10)
+        flag_pct: 旗形振幅阈值 (default 0.15, 即15%)
+        support_pct: 旗形最低支撑比例 (default 0.80)
+        vol_period: 量能均值周期 (default 20)
+        vol_shrink_pct: 缩量阈值 (default 0.6)
+    """
+    p = params or {}
+    momentum_period = p.get('momentum_period', 40)
+    momentum_pct = p.get('momentum_pct', 0.60)
+    flag_period = p.get('flag_period', 10)
+    flag_pct = p.get('flag_pct', 0.15)
+    support_pct = p.get('support_pct', 0.80)
+    vol_period = p.get('vol_period', 20)
+    vol_shrink_pct = p.get('vol_shrink_pct', 0.6)
+
+    signals = {}
+
+    for i in range(momentum_period, len(close)):
+        if np.isnan(close[i]) or np.isnan(vol[i]):
+            continue
+
+        # 1. 强动量
+        mom_high = high[i - momentum_period:i + 1]
+        mom_low = low[i - momentum_period:i + 1]
+        mom_mask = ~(np.isnan(mom_high) | np.isnan(mom_low))
+        if mom_mask.sum() == 0:
+            continue
+        if np.max(mom_high[mom_mask]) / np.min(mom_low[mom_mask]) <= 1 + momentum_pct:
+            continue
+
+        # 2. 极度收敛
+        flag_start = max(i - flag_period + 1, 0)
+        flag_high = high[flag_start:i + 1]
+        flag_low = low[flag_start:i + 1]
+        flag_mask = ~(np.isnan(flag_high) | np.isnan(flag_low))
+        if flag_mask.sum() == 0:
+            continue
+        if np.max(flag_high[flag_mask]) / np.min(flag_low[flag_mask]) >= 1 + flag_pct:
+            continue
+
+        # 3. 高位抗跌
+        mom_max_high = np.max(mom_high[mom_mask])
+        flag_min_low = np.min(flag_low[flag_mask])
+        if flag_min_low < mom_max_high * support_pct:
+            continue
+
+        # 4. 缩量
+        vol_start = max(i - vol_period, 0)
+        vol_window = vol[vol_start:i]
+        vol_window = vol_window[~np.isnan(vol_window)]
+        if len(vol_window) == 0:
+            continue
+        if vol[i] >= np.mean(vol_window) * vol_shrink_pct:
+            continue
+
+        signals[dates[i]] = 'buy'
+
+    return signals
+
+
+# ============================================================
 # 策略注册表（参数 + 函数映射）
 # ============================================================
 
@@ -532,6 +698,40 @@ CORE_STRATEGIES = {
         'needs': ['close'],
         'default_params': {
             'ma_period': 15, 'confirm_days': 3,
+        },
+        'exit_config': {
+            'type': 'fixed',
+            'take_profit_pct': 0.15,
+        },
+    },
+    'limit_up_shakeout': {
+        'name': '涨停洗盘',
+        'func': signals_limit_up_shakeout,
+        'needs': ['close', 'high', 'low', 'vol', 'open'],
+        'default_params': {
+            'limit_up_pct': 0.095,
+            'vol_surge_mult': 2.0,
+            'max_break_pct': 0.02,
+            'hold_days': 7,
+            'stop_loss_pct': 0.05,
+        },
+        'exit_config': {
+            'type': 'fixed',
+            'take_profit_pct': 0.10,
+        },
+    },
+    'high_tight_flag': {
+        'name': '高窄旗形',
+        'func': signals_high_tight_flag,
+        'needs': ['close', 'high', 'low', 'vol', 'open'],
+        'default_params': {
+            'momentum_period': 40,
+            'momentum_pct': 0.60,
+            'flag_period': 10,
+            'flag_pct': 0.15,
+            'support_pct': 0.80,
+            'vol_period': 20,
+            'vol_shrink_pct': 0.6,
         },
         'exit_config': {
             'type': 'fixed',

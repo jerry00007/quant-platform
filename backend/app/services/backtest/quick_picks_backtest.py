@@ -75,6 +75,7 @@ class QuickPicksBacktestEngine:
                  stamp_tax=None, limit_up_threshold=None,
                  bj_exclude=None, enable_limit_filter=True,
                  limit_up_days=5,   # 近N日涨停过滤（Round2新增）
+                 strategies_override=None, scoring_weights=None,
                  ):
         if db_path is None:
             db_path = str(Path(__file__).resolve().parent.parent.parent.parent / "quantweave.db")
@@ -92,6 +93,8 @@ class QuickPicksBacktestEngine:
         self.bj_exclude = bj_exclude if bj_exclude is not None else BJ_EXCLUDE
         self.enable_limit_filter = enable_limit_filter
         self.limit_up_days = limit_up_days  # 近N日涨停过滤窗口
+        self.strategies = strategies_override if strategies_override is not None else ACTIVE_STRATEGIES
+        self.scoring_weights = scoring_weights  # None → 使用 _calc_score 内部默认权重
         # 实例变量：在run()里由_preload_all_data填充
         self.limit_up_dates: dict = {}  # {ts_code: set(涨停日期str)}
 
@@ -327,7 +330,7 @@ class QuickPicksBacktestEngine:
 
         # 指标
         result = self._calculate_metrics(trades, equity_curve, daily_returns, len(trading_dates), daily_pos_count)
-        result["strategy_name"] = "一键选股（双均线+回调企稳）"
+        result["strategy_name"] = f"一键选股（{'+'.join(s['name'] for s in self.strategies.values())}）"
         result["start_date"] = start_date
         result["end_date"] = end_date
         result["max_positions"] = self.max_positions
@@ -485,7 +488,7 @@ class QuickPicksBacktestEngine:
             sigs = {}
             close = df["close"].values.astype(float)
             dates = df["trade_date"].astype(str).tolist()
-            for key, cfg in ACTIVE_STRATEGIES.items():
+            for key, cfg in self.strategies.items():
                 try:
                     if cfg["needs_full"]:
                         high = df["high"].values.astype(float)
@@ -579,7 +582,7 @@ class QuickPicksBacktestEngine:
             if len(df_slice) < 60:
                 continue
 
-            score_data = _calc_score(df_slice, "")
+            score_data = _calc_score(df_slice, "", self.scoring_weights)
             total_score = score_data.get("total", 0)
             if len(strats_hit) >= 2:
                 total_score += 10
@@ -589,7 +592,7 @@ class QuickPicksBacktestEngine:
                 "name": stock_info.get(tc, ""),
                 "score": total_score,
                 "strategy": strats_hit[0],
-                "strategy_name": ", ".join(ACTIVE_STRATEGIES.get(s, {}).get("name", s) for s in strats_hit),
+                "strategy_name": ", ".join(self.strategies.get(s, {}).get("name", s) for s in strats_hit),
                 "resonance": len(strats_hit) >= 2,
             })
 
@@ -602,7 +605,7 @@ class QuickPicksBacktestEngine:
 
     def _check_exit(self, tc, pos, cur_price, high_price, pnl_pct, hold_days, date_str, sell_idx):
         strategy = pos.get("strategy", "dual_ma")
-        exit_cfg = ACTIVE_STRATEGIES.get(strategy, {}).get("exit_config", {})
+        exit_cfg = self.strategies.get(strategy, {}).get("exit_config", {})
         peak = pos.get("peak_price", pos["cost"])
 
         # 1. 止损
@@ -726,7 +729,7 @@ class QuickPicksBacktestEngine:
 # 综合评分函数（独立，避免依赖 QuickPicksService）
 # ================================================================
 
-def _calc_score(df: pd.DataFrame, industry: str = "") -> dict:
+def _calc_score(df: pd.DataFrame, industry: str = "", weights: Optional[dict] = None) -> dict:
     """综合评分: 技术30% + 基本面25% + 消息面20% + 资金面15%"""
     if len(df) < 60:
         return {"total": 0, "advice": "数据不足"}
@@ -826,7 +829,11 @@ def _calc_score(df: pd.DataFrame, industry: str = "") -> dict:
     elif tc_ <= -1: fs -= 10
     fs = min(100, max(0, fs))
 
-    total = round(ts * 0.30 + bs * 0.25 + ns * 0.20 + fs * 0.15, 1)
+    w_tech = (weights or {}).get("tech", 0.30)
+    w_base = (weights or {}).get("base", 0.25)
+    w_news = (weights or {}).get("news", 0.20)
+    w_fund = (weights or {}).get("fund", 0.15)
+    total = round(ts * w_tech + bs * w_base + ns * w_news + fs * w_fund, 1)
     if total >= 80: adv = "强烈买入"
     elif total >= 65: adv = "买入/加仓"
     elif total >= 50: adv = "持有观望"
